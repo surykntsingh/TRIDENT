@@ -6,6 +6,7 @@ except PackageNotFoundError:
     __version__ = "unknown"
 
 from trident.wsi_objects.OpenSlideWSI import OpenSlideWSI
+from trident.wsi_objects.TiffSlideWSI import TiffSlideWSI
 from trident.wsi_objects.CuCIMWSI import CuCIMWSI
 from trident.wsi_objects.ImageWSI import ImageWSI
 from trident.wsi_objects.SDPCWSI import SDPCWSI
@@ -27,6 +28,7 @@ __all__ = [
     "Processor",
     "load_wsi",
     "OpenSlideWSI", 
+    "TiffSlideWSI",
     "ImageWSI",
     "CuCIMWSI",
     "SDPCWSI",

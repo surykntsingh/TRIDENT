@@ -3,12 +3,13 @@ import os
 from typing import Optional, Literal, Union
 
 from trident.wsi_objects.OpenSlideWSI import OpenSlideWSI
+from trident.wsi_objects.TiffSlideWSI import TiffSlideWSI
 from trident.wsi_objects.ImageWSI import ImageWSI
 from trident.wsi_objects.CuCIMWSI import CuCIMWSI
 from trident.wsi_objects.SDPCWSI import SDPCWSI
 from trident.wsi_objects.OMEZarrWSI import OMEZarrWSI
 from trident.wsi_objects.CZIWSI import CZIWSI
-WSIReaderType = Literal['openslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi']
+WSIReaderType = Literal['openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi']
 OPENSLIDE_EXTENSIONS = {'.svs', '.tif', '.tiff', '.ndpi', '.vms', '.vmu', '.scn', '.mrxs', '.dcm'}
 CUCIM_EXTENSIONS = {'.svs', '.tif', '.tiff'}
 SDPC_EXTENSIONS = {'.sdpc'}
@@ -22,7 +23,7 @@ def load_wsi(
     reader_type: Optional[WSIReaderType] = None,
     lazy_init: bool = False,
     **kwargs
-) -> Union[OpenSlideWSI, ImageWSI, CuCIMWSI, SDPCWSI, OMEZarrWSI, CZIWSI]:
+) -> Union[OpenSlideWSI, TiffSlideWSI, ImageWSI, CuCIMWSI, SDPCWSI, OMEZarrWSI, CZIWSI]:
     """
     Load a whole-slide image (WSI) using the appropriate backend.
 
@@ -33,7 +34,7 @@ def load_wsi(
     Parameters:
         slide_path (str):
             Path to the whole-slide image.
-        reader_type ({'openslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi'}, optional):
+        reader_type ({'openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi'}, optional):
             Manually specify the WSI reader to use. If None (default), selection is automatic based on file extension.
         lazy_init (bool, optional):
             Whether to defer backend initialization. Defaults to False for API convenience:
@@ -42,7 +43,7 @@ def load_wsi(
             Additional keyword arguments passed to the WSI reader constructor.
 
     Returns:
-        Union[OpenSlideWSI, ImageWSI, CuCIMWSI, SDPCWSI, OMEZarrWSI, CZIWSI]:
+        Union[OpenSlideWSI, TiffSlideWSI, ImageWSI, CuCIMWSI, SDPCWSI, OMEZarrWSI, CZIWSI]:
             An instance of the appropriate WSI reader.
 
     Raises:
@@ -52,10 +53,13 @@ def load_wsi(
     """
     ext = os.path.splitext(slide_path)[1].lower()
 
-    assert reader_type in ['openslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi', None], f"Unknown reader_type: {reader_type}. Choose from 'openslide', 'image', 'cucim', 'sdpc', 'omezarr', or 'czi'."
+    assert reader_type in ['openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi', None], f"Unknown reader_type: {reader_type}. Choose from 'openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', or 'czi'."
 
     if reader_type == 'openslide':
         return OpenSlideWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)
+
+    elif reader_type == 'tiffslide':
+        return TiffSlideWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)
 
     elif reader_type == 'image':
         return ImageWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)

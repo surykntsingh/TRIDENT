@@ -68,6 +68,12 @@ class TestWSIFactoryRouting(unittest.TestCase):
             self.assertEqual(reader, "open_reader")
             open_mock.assert_called_once_with(slide_path="/tmp/sample.svs", lazy_init=True)
 
+    def test_explicit_tiffslide_reader_is_forwarded(self):
+        with patch.object(wsifactory, "TiffSlideWSI", return_value="tiffslide_reader") as tiffslide_mock:
+            reader = wsifactory.load_wsi("/tmp/sample.tiff", reader_type="tiffslide", lazy_init=True)
+            self.assertEqual(reader, "tiffslide_reader")
+            tiffslide_mock.assert_called_once_with(slide_path="/tmp/sample.tiff", lazy_init=True)
+
 
 class TestWSIContextManager(unittest.TestCase):
     def test_context_manager_releases_on_normal_exit(self):
