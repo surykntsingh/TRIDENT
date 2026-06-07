@@ -8,6 +8,7 @@ python run_batch_of_slides.py --task all --wsi_dir output/wsis --job_dir output 
 """
 import os
 import argparse
+import json
 import torch
 import multiprocessing as mp
 import shutil
@@ -70,8 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=['seg', 'coords', 'feat', 'all'], 
                         help='Task to run: seg (segmentation), coords (save tissue coordinates), img (save tissue images), feat (extract features).')
     parser.add_argument('--job_dir', type=str, required=True, help='Directory to store outputs.')
-    parser.add_argument('--skip_errors', action='store_true', default=False, 
-                        help='Skip errored slides and continue processing.')
+    parser.add_argument('--skip_errors', action=argparse.BooleanOptionalAction, default=True, 
+                        help='Skip errored slides and continue processing. Defaults to enabled for batch runs. Use `--no-skip_errors` to fail fast.')
     parser.add_argument(
         '--clear_dead_locks',
         action='store_true',
@@ -178,6 +179,52 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--feat_batch_size', type=int, default=None, 
                         help='Batch size for feature extraction. Defaults to None (use `batch_size` argument instead).')
     return parser
+
+
+FAILURE_REPORT_FILENAME = "_failed_slides.jsonl"
+
+
+def clear_failure_report(job_dir: str) -> None:
+    path = os.path.join(job_dir, FAILURE_REPORT_FILENAME)
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def read_failure_report(job_dir: str) -> list[dict]:
+    path = os.path.join(job_dir, FAILURE_REPORT_FILENAME)
+    if not os.path.exists(path):
+        return []
+
+    rows: list[dict] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                rows.append({"stage": "unknown", "slide_name": "unknown", "error": line})
+    return rows
+
+
+def print_failure_summary(job_dir: str) -> int:
+    failures = read_failure_report(job_dir)
+    if not failures:
+        print("[MAIN] Failure summary: 0 slides failed.")
+        return 0
+
+    print(f"[MAIN] Failure summary: {len(failures)} slide-task failures recorded.")
+    for row in failures:
+        slide_label = f"{row.get('slide_name', 'unknown')}{row.get('slide_ext', '')}"
+        stage = row.get("stage", "unknown")
+        error = row.get("error", "unknown error")
+        print(f"[MAIN] FAILED [{stage}] {slide_label}: {error}")
+
+    print(f"[MAIN] Detailed failure report saved to {os.path.join(job_dir, FAILURE_REPORT_FILENAME)}")
+    return len(failures)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -509,6 +556,7 @@ def main() -> None:
 
     args = parse_arguments()
     cleanup_cache(args.wsi_cache)
+    clear_failure_report(args.job_dir)
     if getattr(args, "clear_dead_locks", False):
         stats = remove_dead_locks(args.job_dir, max_age_hours=float(args.dead_lock_max_age_hours))
         print(
@@ -583,8 +631,20 @@ def main() -> None:
         run_error = str(e)
         raise
     finally:
+        failure_count = 0
+        try:
+            failure_count = len(read_failure_report(args.job_dir))
+        except Exception:
+            failure_count = 0
+        if run_status == "completed" and failure_count > 0:
+            run_status = "completed_with_errors"
+            run_error = f"{failure_count} slide-task failures recorded"
         try:
             finalize_run(args.job_dir, run_id, status=run_status, error=run_error)
+        except Exception:
+            pass
+        try:
+            print_failure_summary(args.job_dir)
         except Exception:
             pass
 

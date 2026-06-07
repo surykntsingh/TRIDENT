@@ -152,6 +152,28 @@ class TestRunBatchOfSlides(unittest.TestCase):
         ])
         self.assertEqual(args.gpus, [0, 1])
 
+    def test_build_parser_defaults_to_skip_errors(self):
+        parser = batch_mod.build_parser()
+        args = parser.parse_args([
+            "--job_dir", "job",
+            "--wsi_dir", "wsis",
+        ])
+        self.assertTrue(args.skip_errors)
+
+    def test_print_failure_summary_reads_jsonl(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(tmpdir, exist_ok=True)
+            failure_path = os.path.join(tmpdir, batch_mod.FAILURE_REPORT_FILENAME)
+            with open(failure_path, "w", encoding="utf-8") as f:
+                f.write('{"stage":"load_wsi","slide_name":"bad","slide_ext":".tiff","error":"boom"}\n')
+
+            with patch("builtins.print") as mock_print:
+                count = batch_mod.print_failure_summary(tmpdir)
+
+            self.assertEqual(count, 1)
+            printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list)
+            self.assertIn("FAILED [load_wsi] bad.tiff: boom", printed)
+
     def test_main_dedups_positive_gpus_but_keeps_repeated_cpu_workers(self):
         """
         `--gpus 0 0 1` should run 2 workers (one per unique GPU).

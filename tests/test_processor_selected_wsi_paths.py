@@ -81,6 +81,43 @@ class TestProcessorSelectedWSIPaths(unittest.TestCase):
             self.assertEqual(seen_mpps, [0.25, 0.5])
             processor.release()
 
+    def test_skip_errors_drops_bad_slides_during_initialization_and_records_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wsi_source = os.path.join(tmpdir, "wsis")
+            os.makedirs(wsi_source, exist_ok=True)
+            selected = [
+                os.path.join(wsi_source, "good.svs"),
+                os.path.join(wsi_source, "bad.svs"),
+            ]
+            for fp in selected:
+                with open(fp, "w", encoding="utf-8"):
+                    pass
+
+            def fake_load_wsi(**kwargs):
+                name = kwargs["name"]
+                if name == "bad.svs":
+                    raise RuntimeError("bad metadata")
+                slide = SimpleNamespace(name=kwargs["name"], ext=os.path.splitext(kwargs["name"])[1])
+                return nullcontext(slide)
+
+            with patch.object(processor_module, "load_wsi", side_effect=fake_load_wsi):
+                processor = Processor(
+                    job_dir=tmpdir,
+                    wsi_source=wsi_source,
+                    wsi_ext=[".svs"],
+                    selected_wsi_paths=selected,
+                    skip_errors=True,
+                )
+
+            self.assertEqual([w.name for w in processor.wsis], ["good.svs"])
+            failure_report = os.path.join(tmpdir, "_failed_slides.jsonl")
+            self.assertTrue(os.path.exists(failure_report))
+            with open(failure_report, "r", encoding="utf-8") as f:
+                report = f.read()
+            self.assertIn('"stage": "load_wsi"', report)
+            self.assertIn('"slide_name": "bad"', report)
+            processor.release()
+
 
 if __name__ == "__main__":
     unittest.main()

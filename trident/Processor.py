@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import os
 import sys
 import time
@@ -130,6 +131,7 @@ class Processor:
         self.skip_errors = skip_errors
         self.custom_mpp_keys = custom_mpp_keys
         self.max_workers = max_workers
+        self.failure_report_path = os.path.join(self.job_dir, "_failed_slides.jsonl")
 
         # Validate extensions
         assert isinstance(self.wsi_ext, list), f'wsi_ext must be a list, got {type(self.wsi_ext)}'
@@ -194,21 +196,53 @@ class Processor:
                 if not os.path.exists(tissue_seg_path):
                     tissue_seg_path = None
 
-                slide = stack.enter_context(load_wsi(
-                    slide_path=abs_path,
-                    name=name,
-                    tissue_seg_path=tissue_seg_path,
-                    custom_mpp_keys=self.custom_mpp_keys,
-                    mpp=valid_mpps[wsi_idx] if valid_mpps is not None else None,
-                    max_workers=self.max_workers,
-                    reader_type=reader_type,
-                    lazy_init=True,
-                ))
-                self.wsis.append(slide)
+                try:
+                    slide = stack.enter_context(load_wsi(
+                        slide_path=abs_path,
+                        name=name,
+                        tissue_seg_path=tissue_seg_path,
+                        custom_mpp_keys=self.custom_mpp_keys,
+                        mpp=valid_mpps[wsi_idx] if valid_mpps is not None else None,
+                        max_workers=self.max_workers,
+                        reader_type=reader_type,
+                        lazy_init=True,
+                    ))
+                    self.wsis.append(slide)
+                except Exception as e:
+                    if not self.skip_errors:
+                        raise
+                    self._record_slide_failure(
+                        stage="load_wsi",
+                        slide_name=splitext(name)[0],
+                        slide_ext=splitext(name)[1],
+                        slide_path=abs_path,
+                        error=e,
+                    )
+                    print(f"[PROCESSOR] Skipping {name}: failed to load WSI ({e})")
         except Exception:
             stack.close()
             raise
         self._wsi_stack = stack
+
+    def _record_slide_failure(
+        self,
+        stage: str,
+        slide_name: str,
+        slide_ext: str,
+        slide_path: str,
+        error: Exception | str,
+    ) -> None:
+        payload = {
+            "timestamp": time.time(),
+            "stage": stage,
+            "slide_name": slide_name,
+            "slide_ext": slide_ext,
+            "slide_path": slide_path,
+            "error": str(error),
+        }
+        os.makedirs(self.job_dir, exist_ok=True)
+        with open(self.failure_report_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
     def run_segmentation_job(
         self, 
@@ -400,6 +434,13 @@ class Processor:
                 except Exception:
                     pass
                 if self.skip_errors:
+                    self._record_slide_failure(
+                        stage="segmentation",
+                        slide_name=wsi.name,
+                        slide_ext=wsi.ext,
+                        slide_path=getattr(wsi, "slide_path", f"{wsi.name}{wsi.ext}"),
+                        error=e,
+                    )
                     update_log(os.path.join(self.job_dir, '_logs_segmentation.txt'), f'{wsi.name}{wsi.ext}', f'ERROR: {e}')
                     try:
                         update_task_state(
@@ -672,6 +713,13 @@ class Processor:
                 except Exception:
                     pass
                 if self.skip_errors:
+                    self._record_slide_failure(
+                        stage="coords",
+                        slide_name=wsi.name,
+                        slide_ext=wsi.ext,
+                        slide_path=getattr(wsi, "slide_path", f"{wsi.name}{wsi.ext}"),
+                        error=e,
+                    )
                     update_log(os.path.join(self.job_dir, saveto, '_logs_coords.txt'), f'{wsi.name}{wsi.ext}', f'ERROR: {e}')
                     try:
                         update_task_state(
@@ -892,6 +940,13 @@ class Processor:
                 except Exception:
                     pass
                 if self.skip_errors:
+                    self._record_slide_failure(
+                        stage=f"patch_features:{patch_encoder.enc_name if hasattr(patch_encoder, 'enc_name') else 'encoder'}",
+                        slide_name=wsi.name,
+                        slide_ext=wsi.ext,
+                        slide_path=getattr(wsi, "slide_path", f"{wsi.name}{wsi.ext}"),
+                        error=e,
+                    )
                     update_log(log_fp, f'{wsi.name}{wsi.ext}', f'ERROR: {e}')
                     try:
                         update_task_state(
@@ -1127,6 +1182,13 @@ class Processor:
                 except Exception:
                     pass
                 if self.skip_errors:
+                    self._record_slide_failure(
+                        stage=f"slide_features:{slide_encoder.enc_name}",
+                        slide_name=wsi.name,
+                        slide_ext=wsi.ext,
+                        slide_path=getattr(wsi, "slide_path", f"{wsi.name}{wsi.ext}"),
+                        error=e,
+                    )
                     update_log(os.path.join(self.job_dir, coords_dir, f'_logs_slide_features_{slide_encoder.enc_name}.txt'), f'{wsi.name}{wsi.ext}', f'ERROR: {e}')
                     try:
                         update_task_state(
