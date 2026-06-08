@@ -986,6 +986,15 @@ def overlay_gdf_on_thumbnail(
 
     # Crop black borders of the annotated image
     nz = np.nonzero(cv2.cvtColor(thumbnail, cv2.COLOR_BGR2GRAY))  # Non-zero pixel locations
+    if nz[0].size == 0:
+        # An entirely black thumbnail indicates corrupt or unreadable image data
+        # (e.g. a failed/empty region read or a bad pyramid level), not a valid WSI.
+        # Fail loudly so the slide is reported instead of producing garbage output.
+        raise ValueError(
+            f"Thumbnail is entirely black for '{contours_saveto}'; the slide appears "
+            "to contain no readable image data (corrupt file, failed region read, or "
+            "incorrect pyramid level)."
+        )
     xmin, xmax, ymin, ymax = np.min(nz[1]), np.max(nz[1]), np.min(nz[0]), np.max(nz[0])
     cropped_annotated = thumbnail[ymin:ymax, xmin:xmax]
  
