@@ -109,6 +109,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help='Custom keys used to store the resolution as MPP (micron per pixel) in your list of whole-slide image.')
     parser.add_argument('--custom_list_of_wsis', type=str, default=None,
                     help='Custom list of WSIs specified in a csv file.')
+    parser.add_argument('--mpp', type=float, default=None,
+                    help='Microns per pixel (MPP) to apply to ALL slides whose metadata lacks a reliable '
+                         'MPP value. Useful when slides share a known resolution/magnification '
+                         '(e.g. 0.5 for 20x, 0.25 for 40x). A per-slide `mpp` column in '
+                         '`--custom_list_of_wsis` takes precedence over this value.')
     parser.add_argument('--reader_type', type=str, choices=['openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi'], default=None,
                     help='Force the use of a specific WSI image reader. Options are ["openslide", "tiffslide", "image", "cucim", "sdpc", "omezarr", "czi"]. Defaults to None (auto-determine which reader to use).')
     parser.add_argument("--search_nested", action="store_true",
@@ -280,6 +285,7 @@ def initialize_processor(args: argparse.Namespace) -> Processor:
         skip_errors=args.skip_errors,
         custom_mpp_keys=args.custom_mpp_keys,
         custom_list_of_wsis=args.custom_list_of_wsis,
+        mpp=getattr(args, 'mpp', None),
         max_workers=args.max_workers,
         reader_type=args.reader_type,
         search_nested=args.search_nested,

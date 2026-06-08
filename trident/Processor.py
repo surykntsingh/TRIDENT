@@ -35,6 +35,7 @@ class Processor:
         skip_errors: bool = False,
         custom_mpp_keys: Optional[List[str]] = None,
         custom_list_of_wsis: Optional[str] = None,
+        mpp: Optional[float] = None,
         max_workers: Optional[int] = None,
         reader_type: Optional[WSIReaderType] = None,
         search_nested: bool = False, 
@@ -196,13 +197,19 @@ class Processor:
                 if not os.path.exists(tissue_seg_path):
                     tissue_seg_path = None
 
+                # Per-slide mpp from the CSV (if any) wins; otherwise fall back to the
+                # global `--mpp` value applied to every slide.
+                slide_mpp = valid_mpps[wsi_idx] if valid_mpps is not None else None
+                if slide_mpp is None:
+                    slide_mpp = mpp
+
                 try:
                     slide = stack.enter_context(load_wsi(
                         slide_path=abs_path,
                         name=name,
                         tissue_seg_path=tissue_seg_path,
                         custom_mpp_keys=self.custom_mpp_keys,
-                        mpp=valid_mpps[wsi_idx] if valid_mpps is not None else None,
+                        mpp=slide_mpp,
                         max_workers=self.max_workers,
                         reader_type=reader_type,
                         lazy_init=True,
