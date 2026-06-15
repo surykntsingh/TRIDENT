@@ -48,6 +48,15 @@ class _DummyWSI:
         return 0, 1.0
 
 
+class _FloatDownsampleWSI(_DummyWSI):
+    def __init__(self, width: int, height: int):
+        super().__init__(width=width, height=height)
+        self.level_downsamples = [1.0, 3.999999]
+
+    def get_best_level_and_custom_downsample(self, downsample, tolerance=0.1):
+        return 1, 1.0
+
+
 def _seek_distance(coords: np.ndarray, *, weight_x: int = 1, weight_y: int = 1) -> int:
     """
     Deterministic proxy for HDD seek cost.
@@ -134,7 +143,23 @@ class TestWSIPatcherScanOrder(unittest.TestCase):
             ],
         )
 
+    def test_fractional_downsample_is_not_truncated(self):
+        patch_size = 256
+        wsi = _FloatDownsampleWSI(width=1024, height=1024)
+
+        patcher = WSIPatcher(
+            wsi=wsi,
+            patch_size=patch_size,
+            src_mag=20,
+            dst_mag=5,
+            coords_only=True,
+        )
+
+        self.assertEqual(patcher.level, 1)
+        self.assertEqual(patcher.patch_size_src, 1024)
+        self.assertEqual(patcher.patch_size_level, 256)
+        self.assertEqual(patcher.overlap_level, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -365,9 +365,12 @@ class WSIPatcher:
         
     def _prepare(self) -> None:
         level, _ = self.wsi.get_best_level_and_custom_downsample(self.downsample, tolerance=0.1)
-        level_downsample = int(self.wsi.level_downsamples[level])
-        patch_size_level = round(self.patch_size_src / level_downsample)
-        overlap_level = round(self.overlap_src / level_downsample)
+        # Keep the reported pyramid downsample as a float. Some readers expose
+        # values like 3.999999 instead of 4.0, and truncation would shift the
+        # patch grid enough to miss tissue entirely.
+        level_downsample = float(self.wsi.level_downsamples[level])
+        patch_size_level = max(1, round(self.patch_size_src / level_downsample))
+        overlap_level = max(0, round(self.overlap_src / level_downsample))
         return level, patch_size_level, overlap_level
     
     def get_cols_rows(self) -> Tuple[int, int]:
