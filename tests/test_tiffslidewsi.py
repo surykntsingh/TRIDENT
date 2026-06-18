@@ -30,6 +30,36 @@ class _FakeTiffSlide:
         return None
 
 
+class _FakeFailingTiffSlide(_FakeTiffSlide):
+    def read_region(self, location, level, size):
+        raise RuntimeError("tiffslide read failed")
+
+    def get_thumbnail(self, size):
+        return Image.new("RGB", size, (0, 0, 0))
+
+
+class _FakeOpenSlide:
+    def __init__(self, slide_path):
+        self.slide_path = slide_path
+        self.dimensions = (1024, 512)
+        self.level_count = 2
+        self.level_downsamples = (1.0, 4.0)
+        self.level_dimensions = ((1024, 512), (256, 128))
+        self.properties = {
+            "openslide.mpp-x": "0.5",
+            "openslide.objective-power": "20",
+        }
+
+    def read_region(self, location, level, size):
+        return Image.new("RGB", size, (255, 255, 255))
+
+    def get_thumbnail(self, size):
+        return Image.new("RGB", size, (255, 255, 255))
+
+    def close(self):
+        return None
+
+
 class TestTiffSlideWSI(unittest.TestCase):
     def test_lazy_initialize_reads_tiffslide_metadata(self):
         fake_module = types.SimpleNamespace(TiffSlide=_FakeTiffSlide)
@@ -38,6 +68,22 @@ class TestTiffSlideWSI(unittest.TestCase):
             self.assertEqual(wsi.mpp, 0.5)
             self.assertEqual(wsi.mag, 20)
             self.assertEqual(wsi.dimensions, (1024, 512))
+
+    def test_get_thumbnail_falls_back_to_openslide_when_tiffslide_thumbnail_is_black(self):
+        fake_tiffslide_module = types.SimpleNamespace(TiffSlide=_FakeTiffSlide)
+        fake_openslide_module = types.SimpleNamespace(OpenSlide=_FakeOpenSlide)
+        with patch.dict(sys.modules, {"tiffslide": fake_tiffslide_module, "openslide": fake_openslide_module}):
+            wsi = TiffSlideWSI(slide_path="/tmp/sample.tiff", lazy_init=False)
+            thumb = wsi.get_thumbnail((64, 64))
+            self.assertEqual(thumb.getpixel((0, 0)), (255, 255, 255))
+
+    def test_read_region_falls_back_to_openslide_when_tiffslide_raises(self):
+        fake_tiffslide_module = types.SimpleNamespace(TiffSlide=_FakeFailingTiffSlide)
+        fake_openslide_module = types.SimpleNamespace(OpenSlide=_FakeOpenSlide)
+        with patch.dict(sys.modules, {"tiffslide": fake_tiffslide_module, "openslide": fake_openslide_module}):
+            wsi = TiffSlideWSI(slide_path="/tmp/sample.tiff", lazy_init=False)
+            region = wsi.read_region((0, 0), 0, (32, 32))
+            self.assertEqual(region.getpixel((0, 0)), (255, 255, 255))
 
     def test_fetch_mpp_scans_generic_mpp_keys(self):
         wsi = TiffSlideWSI(slide_path="/tmp/sample.tiff", lazy_init=True)

@@ -39,6 +39,27 @@ class TiffSlideWSI(WSI):
     def __init__(self, slide_path: str, **kwargs: Any) -> None:
         super().__init__(slide_path, **kwargs)
 
+    @staticmethod
+    def _is_entirely_black(image: Image.Image) -> bool:
+        return not np.any(np.asarray(image))
+
+    def _init_openslide_fallback(self) -> Any:
+        from openslide import OpenSlide
+
+        return OpenSlide(self.slide_path)
+
+    def _read_region_from_backend(
+        self,
+        backend: Any,
+        location: Tuple[int, int],
+        level: int,
+        size: Tuple[int, int],
+    ) -> Image.Image:
+        return backend.read_region(location, level, size).convert("RGB")
+
+    def _get_thumbnail_from_backend(self, backend: Any, size: tuple[int, int]) -> Image.Image:
+        return backend.get_thumbnail(size).convert("RGB")
+
     def _lazy_initialize(self) -> None:
         super()._lazy_initialize()
 
@@ -53,8 +74,22 @@ class TiffSlideWSI(WSI):
                 "Install it with `pip install tiffslide`."
             ) from e
 
+        self._fallback_img = None
+
         try:
             self.img = TiffSlide(self.slide_path)
+        except Exception as tiffslide_init_error:
+            warnings.warn(
+                f"tiffslide failed to initialize '{self.slide_path}': {tiffslide_init_error}. "
+                "Falling back to OpenSlide."
+            )
+            try:
+                self.img = self._init_openslide_fallback()
+                self._fallback_img = self.img
+            except Exception as fallback_init_error:
+                raise RuntimeError(f"Failed to initialize WSI with tiffslide: {tiffslide_init_error}") from fallback_init_error
+
+        try:
             self.dimensions = self.get_dimensions()
             self.width, self.height = self.dimensions
             self.level_count = self.img.level_count
@@ -142,29 +177,16 @@ class TiffSlideWSI(WSI):
         read_as: ReadMode = "pil",
     ) -> Union[Image.Image, np.ndarray]:
         try:
-            region = self.img.read_region(location, level, size).convert("RGB")
+            region = self._read_region_from_backend(self.img, location, level, size)
         except Exception as e:
             warnings.warn(
                 f"Corrupt region at {location}, level {level}: {e}. "
-                "Re-initializing tiffslide and attempting fallback."
+                "Attempting OpenSlide fallback."
             )
             try:
-                from tiffslide import TiffSlide
-
-                self.img = TiffSlide(self.slide_path)
-                if level > 0:
-                    downsample = self.level_downsamples[level]
-                    fallback_size = (
-                        max(1, round(size[0] * downsample)),
-                        max(1, round(size[1] * downsample)),
-                    )
-                    region = self.img.read_region(location, 0, fallback_size).convert("RGB")
-                    resample_mode = (
-                        Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
-                    )
-                    region = region.resize(size, resample=resample_mode)
-                else:
-                    region = Image.new("RGB", size, (255, 255, 255))
+                if self._fallback_img is None:
+                    self._fallback_img = self._init_openslide_fallback()
+                region = self._read_region_from_backend(self._fallback_img, location, level, size)
             except Exception as fallback_e:
                 warnings.warn(
                     f"Fallback read failed at {location}, level {level}: {fallback_e}. "
@@ -182,4 +204,37 @@ class TiffSlideWSI(WSI):
         return self.img.dimensions
 
     def get_thumbnail(self, size: tuple[int, int]) -> Image.Image:
-        return self.img.get_thumbnail(size).convert("RGB")
+        try:
+            thumbnail = self._get_thumbnail_from_backend(self.img, size)
+            if self._is_entirely_black(thumbnail):
+                raise ValueError("tiffslide returned an entirely black thumbnail")
+            return thumbnail
+        except Exception as e:
+            warnings.warn(
+                f"Thumbnail generation failed for '{self.slide_path}' with tiffslide: {e}. "
+                "Falling back to OpenSlide."
+            )
+            if self._fallback_img is None:
+                self._fallback_img = self._init_openslide_fallback()
+            thumbnail = self._get_thumbnail_from_backend(self._fallback_img, size)
+            if self._is_entirely_black(thumbnail):
+                raise ValueError(
+                    f"Thumbnail is entirely black for '{self.slide_path}'; both tiffslide and "
+                    "OpenSlide returned unreadable image data."
+                )
+            return thumbnail
+
+    def close(self) -> None:
+        backends = []
+        for backend in (getattr(self, "_fallback_img", None), getattr(self, "img", None)):
+            if backend is not None and all(id(backend) != id(existing) for existing in backends):
+                backends.append(backend)
+
+        for backend in backends:
+            try:
+                if backend is not None and hasattr(backend, "close"):
+                    backend.close()
+            except Exception:
+                pass
+        self._fallback_img = None
+        self.img = None

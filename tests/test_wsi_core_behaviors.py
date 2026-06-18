@@ -44,22 +44,26 @@ class TestSplitExt(unittest.TestCase):
 
 
 class TestWSIFactoryRouting(unittest.TestCase):
-    def test_auto_reader_routes_ome_tif_to_openslide(self):
-        with patch.object(wsifactory, "OpenSlideWSI", return_value="open_reader") as open_mock, \
+    def test_auto_reader_routes_ome_tif_to_tiffslide(self):
+        with patch.object(wsifactory, "TiffSlideWSI", return_value="tiff_reader") as tiff_mock, \
+             patch.object(wsifactory, "OpenSlideWSI", return_value="open_reader") as open_mock, \
              patch.object(wsifactory, "ImageWSI", return_value="image_reader") as image_mock, \
              patch.object(wsifactory, "SDPCWSI", return_value="sdpc_reader"):
             reader = wsifactory.load_wsi("/tmp/sample.ome.tif", reader_type=None)
-            self.assertEqual(reader, "open_reader")
-            open_mock.assert_called_once_with(slide_path="/tmp/sample.ome.tif", lazy_init=False)
+            self.assertEqual(reader, "tiff_reader")
+            tiff_mock.assert_called_once_with(slide_path="/tmp/sample.ome.tif", lazy_init=False)
+            open_mock.assert_not_called()
             image_mock.assert_not_called()
 
-    def test_auto_reader_routes_ome_tiff_to_openslide(self):
-        with patch.object(wsifactory, "OpenSlideWSI", return_value="open_reader") as open_mock, \
+    def test_auto_reader_routes_ome_tiff_to_tiffslide(self):
+        with patch.object(wsifactory, "TiffSlideWSI", return_value="tiff_reader") as tiff_mock, \
+             patch.object(wsifactory, "OpenSlideWSI", return_value="open_reader") as open_mock, \
              patch.object(wsifactory, "ImageWSI", return_value="image_reader") as image_mock, \
              patch.object(wsifactory, "SDPCWSI", return_value="sdpc_reader"):
             reader = wsifactory.load_wsi("/tmp/sample.ome.tiff", reader_type=None)
-            self.assertEqual(reader, "open_reader")
-            open_mock.assert_called_once_with(slide_path="/tmp/sample.ome.tiff", lazy_init=False)
+            self.assertEqual(reader, "tiff_reader")
+            tiff_mock.assert_called_once_with(slide_path="/tmp/sample.ome.tiff", lazy_init=False)
+            open_mock.assert_not_called()
             image_mock.assert_not_called()
 
     def test_explicit_lazy_init_true_is_forwarded(self):

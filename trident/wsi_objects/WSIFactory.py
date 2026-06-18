@@ -1,7 +1,7 @@
 
-import os
 from typing import Optional, Literal, Union
 
+from trident.IO import splitext
 from trident.wsi_objects.OpenSlideWSI import OpenSlideWSI
 from trident.wsi_objects.TiffSlideWSI import TiffSlideWSI
 from trident.wsi_objects.ImageWSI import ImageWSI
@@ -10,7 +10,8 @@ from trident.wsi_objects.SDPCWSI import SDPCWSI
 from trident.wsi_objects.OMEZarrWSI import OMEZarrWSI
 from trident.wsi_objects.CZIWSI import CZIWSI
 WSIReaderType = Literal['openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi']
-OPENSLIDE_EXTENSIONS = {'.svs', '.tif', '.tiff', '.ndpi', '.vms', '.vmu', '.scn', '.mrxs', '.dcm'}
+TIFFSLIDE_EXTENSIONS = {'.tif', '.tiff', '.ome.tif', '.ome.tiff'}
+OPENSLIDE_EXTENSIONS = {'.svs', '.ndpi', '.vms', '.vmu', '.scn', '.mrxs', '.dcm'}
 CUCIM_EXTENSIONS = {'.svs', '.tif', '.tiff'}
 SDPC_EXTENSIONS = {'.sdpc'}
 PIL_EXTENSIONS = {'.png', '.jpg', '.jpeg'}
@@ -27,7 +28,8 @@ def load_wsi(
     """
     Load a whole-slide image (WSI) using the appropriate backend.
 
-    By default, uses OpenSlideWSI for OpenSlide-supported file extensions,
+    By default, uses TiffSlideWSI for TIFF-based whole-slide images,
+    OpenSlideWSI for other OpenSlide-supported file extensions,
     and ImageWSI for others. Users may override this behavior by explicitly
     specifying a reader using the `reader_type` argument.
 
@@ -51,7 +53,8 @@ def load_wsi(
             If `reader_type` is 'cucim' but the cucim package is not installed, if `reader_type` is 'sdpc' but the
             sdpc package is not installed, or if an unknown reader type is specified.
     """
-    ext = os.path.splitext(slide_path)[1].lower()
+    _, ext = splitext(slide_path)
+    ext = ext.lower()
 
     assert reader_type in ['openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi', None], f"Unknown reader_type: {reader_type}. Choose from 'openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', or 'czi'."
 
@@ -101,7 +104,9 @@ def load_wsi(
             )
         
     elif reader_type is None:
-        if ext in OPENSLIDE_EXTENSIONS:
+        if ext in TIFFSLIDE_EXTENSIONS:
+            return TiffSlideWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)
+        elif ext in OPENSLIDE_EXTENSIONS:
             return OpenSlideWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)
         elif ext in SDPC_EXTENSIONS:
             return SDPCWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)
