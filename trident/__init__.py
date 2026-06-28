@@ -23,6 +23,10 @@ from trident.Processor import Processor
 from trident.Converter import AnyToTiffConverter
 
 from trident.Maintenance import deprecated
+from trident.single_slide_pipeline import (
+    extract_conch_v15_features_for_wsi,
+    extract_wsi_patch_features,
+)
 
 __all__ = [
     "Processor",
@@ -41,4 +45,6 @@ __all__ = [
     "AnyToTiffConverter",
     "deprecated",
     "WSIReaderType",
+    "extract_wsi_patch_features",
+    "extract_conch_v15_features_for_wsi",
 ]

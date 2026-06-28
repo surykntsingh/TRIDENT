@@ -203,6 +203,15 @@ def  get_weights_path(model_type: str, encoder_name: str) -> str:
 
     assert model_type in ['patch', 'slide', 'seg'], f"Encoder type must be 'patch' or 'slide' or 'seg', not '{model_type}'"
 
+    env_key = "".join(char if char.isalnum() else "_" for char in encoder_name.upper())
+    for variable_name in (
+        f"TRIDENT_{model_type.upper()}_{env_key}_WEIGHTS",
+        f"TRIDENT_WEIGHTS_{model_type.upper()}_{env_key}",
+    ):
+        env_path = os.environ.get(variable_name, "")
+        if env_path and os.path.exists(env_path):
+            return env_path
+
     if model_type == 'patch' or model_type == 'slide':
         root = os.path.join(os.path.dirname(__file__), f"{model_type}_encoder_models")
     else:
