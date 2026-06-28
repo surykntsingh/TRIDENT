@@ -42,6 +42,56 @@ def _feature_count(feature_path: Path) -> int:
         return int(h5_file["features"].shape[0])
 
 
+def _clear_slide_contours(slide) -> None:
+    if hasattr(slide, "gdf_contours"):
+        delattr(slide, "gdf_contours")
+    if hasattr(slide, "tissue_seg_path"):
+        slide.tissue_seg_path = None
+
+
+def _extract_coords_with_segmenter(
+    *,
+    slide,
+    coords_path: Path,
+    coords_root: Path,
+    wsi_name: str,
+    segmenter: str,
+    seg_conf_thresh: float,
+    mag: int,
+    patch_size: int,
+    overlap: int,
+    min_tissue_proportion: float,
+    remove_holes: bool,
+    dataloader_workers: int,
+    device: str,
+) -> int:
+    segmentation_model = segmentation_model_factory(
+        model_name=segmenter,
+        confidence_thresh=seg_conf_thresh,
+    )
+    slide.segment_tissue(
+        segmentation_model=segmentation_model,
+        target_mag=segmentation_model.target_mag,
+        job_dir=str(coords_root.parent),
+        device=_default_segmentation_device(segmenter, device),
+        holes_are_tissue=not remove_holes,
+        num_workers=dataloader_workers,
+    )
+    slide.extract_tissue_coords(
+        target_mag=mag,
+        patch_size=patch_size,
+        save_coords=str(coords_root),
+        overlap=overlap,
+        min_tissue_proportion=min_tissue_proportion,
+    )
+    count = _coords_count(coords_path)
+    if count == 0:
+        warnings.warn(
+            f"No tissue coordinates found for '{wsi_name}' using segmenter='{segmenter}'."
+        )
+    return count
+
+
 def extract_wsi_patch_features(
     *,
     wsi_path: str | Path,
@@ -85,7 +135,6 @@ def extract_wsi_patch_features(
     if reuse_existing and feature_path.exists() and _feature_count(feature_path) > 0:
         return feature_path
 
-    seg_device = _default_segmentation_device(segmenter, device)
     patch_encoder_weights = str(patch_encoder_weights_path) if patch_encoder_weights_path is not None else None
 
     load_kwargs = {
@@ -103,10 +152,74 @@ def extract_wsi_patch_features(
         # sequential DataLoader execution by default for reliability.
         slide.max_workers = dataloader_workers
         if not coords_path.exists():
-            segmentation_model = segmentation_model_factory(
-                model_name=segmenter,
-                confidence_thresh=seg_conf_thresh,
+            count = _extract_coords_with_segmenter(
+                slide=slide,
+                coords_path=coords_path,
+                coords_root=coords_root,
+                wsi_name=wsi_path.name,
+                segmenter=segmenter,
+                seg_conf_thresh=seg_conf_thresh,
+                mag=mag,
+                patch_size=patch_size,
+                overlap=overlap,
+                min_tissue_proportion=min_tissue_proportion,
+                remove_holes=remove_holes,
+                dataloader_workers=dataloader_workers,
+                device=device,
             )
+            if count == 0 and segmenter != "otsu":
+                if segmenter == "hest" and seg_conf_thresh > 0.1:
+                    warnings.warn(
+                        f"Retrying segmenter='hest' with seg_conf_thresh=0.1 for '{wsi_path.name}'."
+                    )
+                    _clear_slide_contours(slide)
+                    count = _extract_coords_with_segmenter(
+                        slide=slide,
+                        coords_path=coords_path,
+                        coords_root=coords_root,
+                        wsi_name=wsi_path.name,
+                        segmenter="hest",
+                        seg_conf_thresh=0.1,
+                        mag=mag,
+                        patch_size=patch_size,
+                        overlap=overlap,
+                        min_tissue_proportion=min_tissue_proportion,
+                        remove_holes=remove_holes,
+                        dataloader_workers=dataloader_workers,
+                        device=device,
+                    )
+            if count == 0 and segmenter != "otsu":
+                warnings.warn(
+                    f"Falling back to segmenter='otsu' for '{wsi_path.name}' before using unmasked coordinates."
+                )
+                _clear_slide_contours(slide)
+                count = _extract_coords_with_segmenter(
+                    slide=slide,
+                    coords_path=coords_path,
+                    coords_root=coords_root,
+                    wsi_name=wsi_path.name,
+                    segmenter="otsu",
+                    seg_conf_thresh=seg_conf_thresh,
+                    mag=mag,
+                    patch_size=patch_size,
+                    overlap=overlap,
+                    min_tissue_proportion=min_tissue_proportion,
+                    remove_holes=remove_holes,
+                    dataloader_workers=dataloader_workers,
+                    device=device,
+                )
+            if count == 0:
+                warnings.warn(
+                    f"Falling back to unmasked whole-slide coordinates for '{wsi_path.name}'."
+                )
+                _clear_slide_contours(slide)
+                slide.extract_tissue_coords(
+                    target_mag=mag,
+                    patch_size=patch_size,
+                    save_coords=str(coords_root),
+                    overlap=overlap,
+                    min_tissue_proportion=0.0,
+                )
             if remove_artifacts or remove_penmarks:
                 artifact_remover_model = segmentation_model_factory(
                     "grandqc_artifact",
@@ -114,15 +227,6 @@ def extract_wsi_patch_features(
                 )
             else:
                 artifact_remover_model = None
-
-            slide.segment_tissue(
-                segmentation_model=segmentation_model,
-                target_mag=segmentation_model.target_mag,
-                job_dir=str(job_dir),
-                device=seg_device,
-                holes_are_tissue=not remove_holes,
-                num_workers=dataloader_workers,
-            )
             if artifact_remover_model is not None:
                 slide.segment_tissue(
                     segmentation_model=artifact_remover_model,
@@ -131,22 +235,6 @@ def extract_wsi_patch_features(
                     job_dir=str(job_dir),
                     num_workers=dataloader_workers,
                 )
-            slide.extract_tissue_coords(
-                target_mag=mag,
-                patch_size=patch_size,
-                save_coords=str(coords_root),
-                overlap=overlap,
-                min_tissue_proportion=min_tissue_proportion,
-            )
-            if _coords_count(coords_path) == 0:
-                warnings.warn(
-                    f"No tissue coordinates found for '{wsi_path.name}' using segmenter='{segmenter}'. "
-                    "Falling back to unmasked whole-slide coordinates."
-                )
-                if hasattr(slide, "gdf_contours"):
-                    delattr(slide, "gdf_contours")
-                if hasattr(slide, "tissue_seg_path"):
-                    slide.tissue_seg_path = None
                 slide.extract_tissue_coords(
                     target_mag=mag,
                     patch_size=patch_size,
