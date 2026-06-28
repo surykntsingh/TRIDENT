@@ -24,6 +24,7 @@ def _default_segmentation_device(segmenter: str, device: str) -> str:
 def extract_wsi_patch_features(
     *,
     wsi_path: str | Path,
+    wsi_array=None,
     job_dir: str | Path,
     patch_encoder: str = "conch_v15",
     patch_encoder_weights_path: str | Path | None = None,
@@ -33,6 +34,7 @@ def extract_wsi_patch_features(
     patch_size: int = 512,
     overlap: int = 0,
     batch_size: int = 32,
+    dataloader_workers: int = 0,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
     mpp: float | None = None,
@@ -65,13 +67,20 @@ def extract_wsi_patch_features(
     seg_device = _default_segmentation_device(segmenter, device)
     patch_encoder_weights = str(patch_encoder_weights_path) if patch_encoder_weights_path is not None else None
 
-    with load_wsi(
-        slide_path=str(wsi_path),
-        reader_type=reader_type,
-        lazy_init=False,
-        mpp=mpp,
-        custom_mpp_keys=custom_mpp_keys,
-    ) as slide:
+    load_kwargs = {
+        "slide_path": str(wsi_path),
+        "reader_type": reader_type,
+        "lazy_init": False,
+        "mpp": mpp,
+        "custom_mpp_keys": custom_mpp_keys,
+    }
+    if wsi_array is not None:
+        load_kwargs["wsi_array"] = wsi_array
+
+    with load_wsi(**load_kwargs) as slide:
+        # Submission containers tend to have very limited /dev/shm. Force
+        # sequential DataLoader execution by default for reliability.
+        slide.max_workers = dataloader_workers
         if not coords_path.exists():
             segmentation_model = segmentation_model_factory(
                 model_name=segmenter,
@@ -91,6 +100,7 @@ def extract_wsi_patch_features(
                 job_dir=str(job_dir),
                 device=seg_device,
                 holes_are_tissue=not remove_holes,
+                num_workers=dataloader_workers,
             )
             if artifact_remover_model is not None:
                 slide.segment_tissue(
@@ -98,6 +108,7 @@ def extract_wsi_patch_features(
                     target_mag=artifact_remover_model.target_mag,
                     holes_are_tissue=False,
                     job_dir=str(job_dir),
+                    num_workers=dataloader_workers,
                 )
             slide.extract_tissue_coords(
                 target_mag=mag,
@@ -126,6 +137,7 @@ def extract_wsi_patch_features(
 def extract_conch_v15_features_for_wsi(
     *,
     wsi_path: str | Path,
+    wsi_array=None,
     job_dir: str | Path,
     patch_encoder_weights_path: str | Path | None = None,
     segmenter: str = "otsu",
@@ -134,6 +146,7 @@ def extract_conch_v15_features_for_wsi(
     patch_size: int = 512,
     overlap: int = 0,
     batch_size: int = 32,
+    dataloader_workers: int = 0,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
     mpp: float | None = None,
@@ -146,6 +159,7 @@ def extract_conch_v15_features_for_wsi(
 ) -> Path:
     return extract_wsi_patch_features(
         wsi_path=wsi_path,
+        wsi_array=wsi_array,
         job_dir=job_dir,
         patch_encoder="conch_v15",
         patch_encoder_weights_path=patch_encoder_weights_path,
@@ -155,6 +169,7 @@ def extract_conch_v15_features_for_wsi(
         patch_size=patch_size,
         overlap=overlap,
         batch_size=batch_size,
+        dataloader_workers=dataloader_workers,
         device=device,
         reader_type=reader_type,
         mpp=mpp,
