@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Optional
+
+import h5py
 
 from trident.patch_encoder_models.load import encoder_factory
 from trident.segmentation_models.load import segmentation_model_factory
@@ -19,6 +22,24 @@ def _resolve_path(root: Path, path: str | Path | None) -> Path | None:
 
 def _default_segmentation_device(segmenter: str, device: str) -> str:
     return "cpu" if segmenter == "otsu" else device
+
+
+def _coords_count(coords_path: Path) -> int:
+    if not coords_path.exists():
+        return 0
+    with h5py.File(coords_path, "r") as h5_file:
+        if "coords" not in h5_file:
+            return 0
+        return int(h5_file["coords"].shape[0])
+
+
+def _feature_count(feature_path: Path) -> int:
+    if not feature_path.exists():
+        return 0
+    with h5py.File(feature_path, "r") as h5_file:
+        if "features" not in h5_file:
+            return 0
+        return int(h5_file["features"].shape[0])
 
 
 def extract_wsi_patch_features(
@@ -61,7 +82,7 @@ def extract_wsi_patch_features(
     resolved_features_dir = _resolve_path(job_dir, features_dir) or (coords_root / f"features_{patch_encoder}")
     feature_path = resolved_features_dir / f"{wsi_path.stem}.{saveas}"
 
-    if reuse_existing and feature_path.exists():
+    if reuse_existing and feature_path.exists() and _feature_count(feature_path) > 0:
         return feature_path
 
     seg_device = _default_segmentation_device(segmenter, device)
@@ -117,6 +138,22 @@ def extract_wsi_patch_features(
                 overlap=overlap,
                 min_tissue_proportion=min_tissue_proportion,
             )
+            if _coords_count(coords_path) == 0:
+                warnings.warn(
+                    f"No tissue coordinates found for '{wsi_path.name}' using segmenter='{segmenter}'. "
+                    "Falling back to unmasked whole-slide coordinates."
+                )
+                if hasattr(slide, "gdf_contours"):
+                    delattr(slide, "gdf_contours")
+                if hasattr(slide, "tissue_seg_path"):
+                    slide.tissue_seg_path = None
+                slide.extract_tissue_coords(
+                    target_mag=mag,
+                    patch_size=patch_size,
+                    save_coords=str(coords_root),
+                    overlap=overlap,
+                    min_tissue_proportion=0.0,
+                )
 
         encoder = encoder_factory(
             patch_encoder,
