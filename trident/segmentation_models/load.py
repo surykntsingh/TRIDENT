@@ -84,7 +84,7 @@ class HESTSegmenter(SegmentationModel):
             raise FileNotFoundError(f"Expected checkpoint at '{weights_path}', but the file was not found.")
 
         # Initialize base model
-        model = deeplabv3_resnet50(weights=None)
+        model = deeplabv3_resnet50(weights=None, weights_backbone=None)
         model.classifier[4] = nn.Conv2d(256, 2, kernel_size=1, stride=1)
 
         if not weights_path:
