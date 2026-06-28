@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+import h5py
 from contextlib import ExitStack
 from tqdm import tqdm
 from typing import Optional, List, Dict, Any
@@ -251,6 +252,24 @@ class Processor:
         with open(self.failure_report_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
+    @staticmethod
+    def _coords_count(coords_path: str) -> int:
+        if not os.path.exists(coords_path):
+            return 0
+        with h5py.File(coords_path, "r") as h5_file:
+            if "coords" not in h5_file:
+                return 0
+            return int(h5_file["coords"].shape[0])
+
+    @staticmethod
+    def _features_count(features_path: str) -> int:
+        if not os.path.exists(features_path):
+            return 0
+        with h5py.File(features_path, "r") as h5_file:
+            if "features" not in h5_file:
+                return 0
+            return int(h5_file["features"].shape[0])
+
     def run_segmentation_job(
         self, 
         segmentation_model: torch.nn.Module, 
@@ -380,6 +399,11 @@ class Processor:
                     batch_size=batch_size,
                     device=device
                 )
+                if getattr(wsi, "tiffslide_black_thumbnail_detected", False):
+                    raise RuntimeError(
+                        "tiffslide produced an entirely black thumbnail. "
+                        "Failing this slide to avoid silently generating invalid segmentation/features."
+                    )
 
                 # additionally remove artifacts for better segmentation.
                 if artifact_remover_model is not None:
@@ -394,24 +418,10 @@ class Processor:
 
                 gdf = gpd.read_file(gdf_saveto, rows=1)
                 if gdf.empty:
-                    update_log(os.path.join(self.job_dir, '_logs_segmentation.txt'), f'{wsi.name}{wsi.ext}', 'Segmentation returned empty GeoDataFrame.')
-                    self.loop.set_postfix_str(f'Empty GeoDataFrame for {wsi.name}.')
-                    try:
-                        update_task_state(
-                            self.job_dir,
-                            slide_ref,
-                            "segmentation",
-                            "completed",
-                            reason="empty_geodataframe",
-                            outputs={
-                                "contour_geojson": gdf_saveto,
-                                "contour_jpg": os.path.join(saveto, f"{wsi.name}.jpg"),
-                            },
-                            attempt=make_attempt("finished"),
-                            wsi_meta=wsi_meta,
-                        )
-                    except Exception:
-                        pass
+                    raise RuntimeError(
+                        f"Segmentation returned empty GeoDataFrame for {wsi.name}{wsi.ext}. "
+                        "Failing this slide to avoid silently generating empty coordinates/features."
+                    )
                 else:
                     update_log(os.path.join(self.job_dir,  '_logs_segmentation.txt'), f'{wsi.name}{wsi.ext}', 'Tissue segmented.')
                     try:
@@ -433,8 +443,7 @@ class Processor:
                 # Release WSI resources to prevent memory accumulation
                 wsi.release()
             except Exception as e:
-                if isinstance(e, KeyboardInterrupt):
-                    remove_lock(os.path.join(saveto, f'{wsi.name}.jpg'))
+                remove_lock(os.path.join(saveto, f'{wsi.name}.jpg'))
                 # Release WSI resources even on error to prevent memory leaks
                 try:
                     wsi.release()
@@ -628,26 +637,41 @@ class Processor:
             # Check if GeoJSON is empty
             gdf = gpd.read_file(wsi.tissue_seg_path, rows=1)
             if gdf.empty:
-                self.loop.set_postfix_str(f'Empty GeoDataFrame for {wsi.name}. Skipping...')
-                update_log(os.path.join(self.job_dir, saveto, '_logs_coords.txt'), f'{wsi.name}{wsi.ext}', 'Empty GeoDataFrame.')
-                try:
-                    update_task_state(
-                        self.job_dir,
-                        slide_ref,
-                        "coords",
-                        "skipped",
-                        reason="empty_geodataframe",
-                        outputs={"tissue_geojson": wsi.tissue_seg_path},
-                        wsi_meta=wsi_meta,
+                err = RuntimeError(
+                    f"Empty GeoDataFrame for {wsi.name}{wsi.ext}. "
+                    "Failing coords stage to avoid silently generating empty features."
+                )
+                self.loop.set_postfix_str(f'Empty GeoDataFrame for {wsi.name}. Error.')
+                update_log(os.path.join(self.job_dir, saveto, '_logs_coords.txt'), f'{wsi.name}{wsi.ext}', f'ERROR: {err}')
+                if self.skip_errors:
+                    self._record_slide_failure(
+                        stage="coords",
+                        slide_name=wsi.name,
+                        slide_ext=wsi.ext,
+                        slide_path=getattr(wsi, "slide_path", f"{wsi.name}{wsi.ext}"),
+                        error=err,
                     )
-                except Exception:
-                    pass
-                continue
+                    try:
+                        update_task_state(
+                            self.job_dir,
+                            slide_ref,
+                            "coords",
+                            "error",
+                            message=str(err),
+                            attempt=make_attempt("error", error=str(err)),
+                            outputs={"tissue_geojson": wsi.tissue_seg_path},
+                            wsi_meta=wsi_meta,
+                        )
+                    except Exception:
+                        pass
+                    continue
+                raise err
 
             try:
                 self.loop.set_postfix_str(f'Generating patch coords for {wsi.name}{wsi.ext}')
                 update_log(os.path.join(self.job_dir, saveto, '_logs_coords.txt'), f'{wsi.name}{wsi.ext}', 'LOCKED. Generating coords...')
-                create_lock(os.path.join(self.job_dir, saveto, 'patches', f'{wsi.name}_patches.h5'))
+                coords_fp = os.path.join(self.job_dir, saveto, 'patches', f'{wsi.name}_patches.h5')
+                create_lock(coords_fp)
                 try:
                     update_task_state(
                         self.job_dir,
@@ -656,7 +680,7 @@ class Processor:
                         "running",
                         message="started",
                         outputs={
-                            "coords_h5": os.path.join(self.job_dir, saveto, "patches", f"{wsi.name}_patches.h5")
+                            "coords_h5": coords_fp
                         },
                         attempt=make_attempt("started"),
                         wsi_meta=wsi_meta,
@@ -672,10 +696,14 @@ class Processor:
                     overlap=overlap,
                     min_tissue_proportion=min_tissue_proportion,
                 )
+                if self._coords_count(coords_fp) == 0:
+                    raise RuntimeError(
+                        f"No patch coordinates generated for {wsi.name}{wsi.ext}. "
+                        "Failing coords stage to avoid silently creating empty features."
+                    )
 
                 # optionally dump patch images for debugging/inspection
                 if dump_patches:
-                    coords_fp = os.path.join(self.job_dir, saveto, 'patches', f'{wsi.name}_patches.h5')
                     wsi.dump_patches(
                         coords_path=coords_fp,
                         save_patches_dir=os.path.join(self.job_dir, saveto, "patch_images"),
@@ -691,7 +719,7 @@ class Processor:
                         save_patch_viz=os.path.join(self.job_dir, save_patch_viz),
                     )
 
-                remove_lock(os.path.join(self.job_dir, saveto, 'patches', f'{wsi.name}_patches.h5'))
+                remove_lock(coords_fp)
                 update_log(os.path.join(self.job_dir, saveto, '_logs_coords.txt'), f'{wsi.name}{wsi.ext}', 'Coords generated')
                 try:
                     update_task_state(
@@ -712,8 +740,7 @@ class Processor:
                 # Release WSI resources to prevent memory accumulation
                 wsi.release()
             except Exception as e:
-                if isinstance(e, KeyboardInterrupt):
-                    remove_lock(os.path.join(self.job_dir, saveto, 'patches', f'{wsi.name}_patches.h5'))
+                remove_lock(os.path.join(self.job_dir, saveto, 'patches', f'{wsi.name}_patches.h5'))
                 # Release WSI resources even on error to prevent memory leaks
                 try:
                     wsi.release()
@@ -842,6 +869,35 @@ class Processor:
             wsi_feats_fp = os.path.join(self.job_dir, saveto, f'{wsi.name}.{saveas}')
             # Check if features already exist
             if os.path.exists(wsi_feats_fp) and not is_locked(wsi_feats_fp):
+                if saveas == "h5" and self._features_count(wsi_feats_fp) == 0:
+                    err = RuntimeError(
+                        f"Existing feature file is empty for {wsi.name}{wsi.ext}: {wsi_feats_fp}. "
+                        "Failing feature stage instead of silently reusing it."
+                    )
+                    if self.skip_errors:
+                        self._record_slide_failure(
+                            stage=f"patch_features:{patch_encoder.enc_name if hasattr(patch_encoder, 'enc_name') else 'encoder'}",
+                            slide_name=wsi.name,
+                            slide_ext=wsi.ext,
+                            slide_path=getattr(wsi, "slide_path", f"{wsi.name}{wsi.ext}"),
+                            error=err,
+                        )
+                        update_log(log_fp, f'{wsi.name}{wsi.ext}', f'ERROR: {err}')
+                        try:
+                            update_task_state(
+                                self.job_dir,
+                                slide_ref,
+                                f"patch_features:{patch_encoder.enc_name if hasattr(patch_encoder,'enc_name') else 'encoder'}",
+                                "error",
+                                message=str(err),
+                                attempt=make_attempt("error", error=str(err)),
+                                outputs={"features_path": wsi_feats_fp},
+                                wsi_meta=wsi_meta,
+                            )
+                        except Exception:
+                            pass
+                        continue
+                    raise err
                 self.loop.set_postfix_str(f'Features already extracted for {wsi}. Skipping...')
                 update_log(log_fp, f'{wsi.name}{wsi.ext}', 'Features extracted.')
                 try:
@@ -876,6 +932,35 @@ class Processor:
                 except Exception:
                     pass
                 continue
+            if self._coords_count(coords_path) == 0:
+                err = RuntimeError(
+                    f"Coordinate file is empty for {wsi.name}{wsi.ext}: {coords_path}. "
+                    "Failing feature stage to avoid creating an empty feature H5."
+                )
+                if self.skip_errors:
+                    self._record_slide_failure(
+                        stage=f"patch_features:{patch_encoder.enc_name if hasattr(patch_encoder, 'enc_name') else 'encoder'}",
+                        slide_name=wsi.name,
+                        slide_ext=wsi.ext,
+                        slide_path=getattr(wsi, "slide_path", f"{wsi.name}{wsi.ext}"),
+                        error=err,
+                    )
+                    update_log(log_fp, f'{wsi.name}{wsi.ext}', f'ERROR: {err}')
+                    try:
+                        update_task_state(
+                            self.job_dir,
+                            slide_ref,
+                            f"patch_features:{patch_encoder.enc_name if hasattr(patch_encoder,'enc_name') else 'encoder'}",
+                            "error",
+                            message=str(err),
+                            attempt=make_attempt("error", error=str(err)),
+                            outputs={"coords_path": coords_path},
+                            wsi_meta=wsi_meta,
+                        )
+                    except Exception:
+                        pass
+                    continue
+                raise err
 
             # Check if another process has claimed this slide
             if is_locked(wsi_feats_fp):
@@ -920,6 +1005,10 @@ class Processor:
                     saveas=saveas,
                     batch_limit=batch_limit
                 )
+                if saveas == "h5" and self._features_count(wsi_feats_fp) == 0:
+                    raise RuntimeError(
+                        f"Feature extraction produced empty features for {wsi.name}{wsi.ext}: {wsi_feats_fp}."
+                    )
 
                 remove_lock(wsi_feats_fp)
                 update_log(log_fp, f'{wsi.name}{wsi.ext}', 'Features extracted.')
@@ -939,8 +1028,7 @@ class Processor:
                 # Release WSI resources to prevent memory accumulation
                 wsi.release()
             except Exception as e:
-                if isinstance(e, KeyboardInterrupt):
-                    remove_lock(wsi_feats_fp)
+                remove_lock(wsi_feats_fp)
                 # Release WSI resources even on error to prevent memory leaks
                 try:
                     wsi.release()

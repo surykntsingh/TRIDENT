@@ -75,6 +75,7 @@ class TiffSlideWSI(WSI):
             ) from e
 
         self._fallback_img = None
+        self.tiffslide_black_thumbnail_detected = False
 
         try:
             self.img = TiffSlide(self.slide_path)
@@ -207,6 +208,7 @@ class TiffSlideWSI(WSI):
         try:
             thumbnail = self._get_thumbnail_from_backend(self.img, size)
             if self._is_entirely_black(thumbnail):
+                self.tiffslide_black_thumbnail_detected = True
                 raise ValueError("tiffslide returned an entirely black thumbnail")
             return thumbnail
         except Exception as e:

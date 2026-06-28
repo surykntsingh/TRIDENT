@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import h5py
 
@@ -108,6 +108,7 @@ def extract_wsi_patch_features(
     dataloader_workers: int = 0,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
+    reader_type_fallbacks: Sequence[WSIReaderType] | None = None,
     mpp: float | None = None,
     custom_mpp_keys: Optional[list[str]] = None,
     min_tissue_proportion: float = 0.0,
@@ -137,27 +138,144 @@ def extract_wsi_patch_features(
 
     patch_encoder_weights = str(patch_encoder_weights_path) if patch_encoder_weights_path is not None else None
 
-    load_kwargs = {
-        "slide_path": str(wsi_path),
-        "reader_type": reader_type,
-        "lazy_init": False,
-        "mpp": mpp,
-        "custom_mpp_keys": custom_mpp_keys,
-    }
-    if wsi_array is not None:
-        load_kwargs["wsi_array"] = wsi_array
+    reader_candidates = list(reader_type_fallbacks or [])
+    if reader_type is not None:
+        reader_candidates.insert(0, reader_type)
+    if not reader_candidates:
+        reader_candidates = [None]
 
-    with load_wsi(**load_kwargs) as slide:
-        # Submission containers tend to have very limited /dev/shm. Force
-        # sequential DataLoader execution by default for reliability.
-        slide.max_workers = dataloader_workers
-        if not coords_path.exists():
+    last_reader_error: Exception | None = None
+    for reader_candidate in reader_candidates:
+        load_kwargs = {
+            "slide_path": str(wsi_path),
+            "reader_type": reader_candidate,
+            "lazy_init": False,
+            "mpp": mpp,
+            "custom_mpp_keys": custom_mpp_keys,
+        }
+        if wsi_array is not None:
+            load_kwargs["wsi_array"] = wsi_array
+        try:
+            slide_cm = load_wsi(**load_kwargs)
+        except Exception as exc:
+            last_reader_error = exc
+            warnings.warn(
+                f"Failed to initialize WSI reader '{reader_candidate}' for '{wsi_path.name}': {exc}"
+            )
+            continue
+
+        try:
+            with slide_cm as slide:
+                return _extract_wsi_patch_features_from_slide(
+                    slide=slide,
+                    wsi_path=wsi_path,
+                    job_dir=job_dir,
+                    coords_root=coords_root,
+                    coords_path=coords_path,
+                    resolved_features_dir=resolved_features_dir,
+                    patch_encoder=patch_encoder,
+                    patch_encoder_weights=patch_encoder_weights,
+                    segmenter=segmenter,
+                    seg_conf_thresh=seg_conf_thresh,
+                    mag=mag,
+                    patch_size=patch_size,
+                    overlap=overlap,
+                    batch_size=batch_size,
+                    dataloader_workers=dataloader_workers,
+                    device=device,
+                    min_tissue_proportion=min_tissue_proportion,
+                    remove_holes=remove_holes,
+                    remove_artifacts=remove_artifacts,
+                    remove_penmarks=remove_penmarks,
+                    saveas=saveas,
+                )
+        except Exception as exc:
+            last_reader_error = exc
+            warnings.warn(
+                f"WSI reader '{reader_candidate}' failed while processing '{wsi_path.name}': {exc}"
+            )
+            continue
+
+    raise RuntimeError(
+        f"All WSI readers failed for '{wsi_path.name}'. Tried {reader_candidates}."
+    ) from last_reader_error
+
+
+def _extract_wsi_patch_features_from_slide(
+    *,
+    slide,
+    wsi_path: Path,
+    job_dir: Path,
+    coords_root: Path,
+    coords_path: Path,
+    resolved_features_dir: Path,
+    patch_encoder: str,
+    patch_encoder_weights: str | None,
+    segmenter: str,
+    seg_conf_thresh: float,
+    mag: int,
+    patch_size: int,
+    overlap: int,
+    batch_size: int,
+    dataloader_workers: int,
+    device: str,
+    min_tissue_proportion: float,
+    remove_holes: bool,
+    remove_artifacts: bool,
+    remove_penmarks: bool,
+    saveas: str,
+) -> Path:
+    # Submission containers tend to have very limited /dev/shm. Force
+    # sequential DataLoader execution by default for reliability.
+    slide.max_workers = dataloader_workers
+    if not coords_path.exists():
+        count = _extract_coords_with_segmenter(
+            slide=slide,
+            coords_path=coords_path,
+            coords_root=coords_root,
+            wsi_name=wsi_path.name,
+            segmenter=segmenter,
+            seg_conf_thresh=seg_conf_thresh,
+            mag=mag,
+            patch_size=patch_size,
+            overlap=overlap,
+            min_tissue_proportion=min_tissue_proportion,
+            remove_holes=remove_holes,
+            dataloader_workers=dataloader_workers,
+            device=device,
+        )
+        if count == 0 and segmenter != "otsu":
+            if segmenter == "hest" and seg_conf_thresh > 0.1:
+                warnings.warn(
+                    f"Retrying segmenter='hest' with seg_conf_thresh=0.1 for '{wsi_path.name}'."
+                )
+                _clear_slide_contours(slide)
+                count = _extract_coords_with_segmenter(
+                    slide=slide,
+                    coords_path=coords_path,
+                    coords_root=coords_root,
+                    wsi_name=wsi_path.name,
+                    segmenter="hest",
+                    seg_conf_thresh=0.1,
+                    mag=mag,
+                    patch_size=patch_size,
+                    overlap=overlap,
+                    min_tissue_proportion=min_tissue_proportion,
+                    remove_holes=remove_holes,
+                    dataloader_workers=dataloader_workers,
+                    device=device,
+                )
+        if count == 0 and segmenter != "otsu":
+            warnings.warn(
+                f"Falling back to segmenter='otsu' for '{wsi_path.name}' before using unmasked coordinates."
+            )
+            _clear_slide_contours(slide)
             count = _extract_coords_with_segmenter(
                 slide=slide,
                 coords_path=coords_path,
                 coords_root=coords_root,
                 wsi_name=wsi_path.name,
-                segmenter=segmenter,
+                segmenter="otsu",
                 seg_conf_thresh=seg_conf_thresh,
                 mag=mag,
                 patch_size=patch_size,
@@ -167,94 +285,53 @@ def extract_wsi_patch_features(
                 dataloader_workers=dataloader_workers,
                 device=device,
             )
-            if count == 0 and segmenter != "otsu":
-                if segmenter == "hest" and seg_conf_thresh > 0.1:
-                    warnings.warn(
-                        f"Retrying segmenter='hest' with seg_conf_thresh=0.1 for '{wsi_path.name}'."
-                    )
-                    _clear_slide_contours(slide)
-                    count = _extract_coords_with_segmenter(
-                        slide=slide,
-                        coords_path=coords_path,
-                        coords_root=coords_root,
-                        wsi_name=wsi_path.name,
-                        segmenter="hest",
-                        seg_conf_thresh=0.1,
-                        mag=mag,
-                        patch_size=patch_size,
-                        overlap=overlap,
-                        min_tissue_proportion=min_tissue_proportion,
-                        remove_holes=remove_holes,
-                        dataloader_workers=dataloader_workers,
-                        device=device,
-                    )
-            if count == 0 and segmenter != "otsu":
-                warnings.warn(
-                    f"Falling back to segmenter='otsu' for '{wsi_path.name}' before using unmasked coordinates."
-                )
-                _clear_slide_contours(slide)
-                count = _extract_coords_with_segmenter(
-                    slide=slide,
-                    coords_path=coords_path,
-                    coords_root=coords_root,
-                    wsi_name=wsi_path.name,
-                    segmenter="otsu",
-                    seg_conf_thresh=seg_conf_thresh,
-                    mag=mag,
-                    patch_size=patch_size,
-                    overlap=overlap,
-                    min_tissue_proportion=min_tissue_proportion,
-                    remove_holes=remove_holes,
-                    dataloader_workers=dataloader_workers,
-                    device=device,
-                )
-            if count == 0:
-                warnings.warn(
-                    f"Falling back to unmasked whole-slide coordinates for '{wsi_path.name}'."
-                )
-                _clear_slide_contours(slide)
-                slide.extract_tissue_coords(
-                    target_mag=mag,
-                    patch_size=patch_size,
-                    save_coords=str(coords_root),
-                    overlap=overlap,
-                    min_tissue_proportion=0.0,
-                )
-            if remove_artifacts or remove_penmarks:
-                artifact_remover_model = segmentation_model_factory(
-                    "grandqc_artifact",
-                    remove_penmarks_only=remove_penmarks and not remove_artifacts,
-                )
-            else:
-                artifact_remover_model = None
-            if artifact_remover_model is not None:
-                slide.segment_tissue(
-                    segmentation_model=artifact_remover_model,
-                    target_mag=artifact_remover_model.target_mag,
-                    holes_are_tissue=False,
-                    job_dir=str(job_dir),
-                    num_workers=dataloader_workers,
-                )
-                slide.extract_tissue_coords(
-                    target_mag=mag,
-                    patch_size=patch_size,
-                    save_coords=str(coords_root),
-                    overlap=overlap,
-                    min_tissue_proportion=0.0,
-                )
+        if count == 0:
+            warnings.warn(
+                f"Falling back to unmasked whole-slide coordinates for '{wsi_path.name}'."
+            )
+            _clear_slide_contours(slide)
+            slide.extract_tissue_coords(
+                target_mag=mag,
+                patch_size=patch_size,
+                save_coords=str(coords_root),
+                overlap=overlap,
+                min_tissue_proportion=0.0,
+            )
+        if remove_artifacts or remove_penmarks:
+            artifact_remover_model = segmentation_model_factory(
+                "grandqc_artifact",
+                remove_penmarks_only=remove_penmarks and not remove_artifacts,
+            )
+        else:
+            artifact_remover_model = None
+        if artifact_remover_model is not None:
+            slide.segment_tissue(
+                segmentation_model=artifact_remover_model,
+                target_mag=artifact_remover_model.target_mag,
+                holes_are_tissue=False,
+                job_dir=str(job_dir),
+                num_workers=dataloader_workers,
+            )
+            slide.extract_tissue_coords(
+                target_mag=mag,
+                patch_size=patch_size,
+                save_coords=str(coords_root),
+                overlap=overlap,
+                min_tissue_proportion=0.0,
+            )
 
-        encoder = encoder_factory(
-            patch_encoder,
-            weights_path=patch_encoder_weights,
-        )
-        generated_path = slide.extract_patch_features(
-            patch_encoder=encoder,
-            coords_path=str(coords_path),
-            save_features=str(resolved_features_dir),
-            device=device,
-            saveas=saveas,
-            batch_limit=batch_size,
-        )
+    encoder = encoder_factory(
+        patch_encoder,
+        weights_path=patch_encoder_weights,
+    )
+    generated_path = slide.extract_patch_features(
+        patch_encoder=encoder,
+        coords_path=str(coords_path),
+        save_features=str(resolved_features_dir),
+        device=device,
+        saveas=saveas,
+        batch_limit=batch_size,
+    )
 
     return Path(generated_path)
 
@@ -274,6 +351,7 @@ def extract_conch_v15_features_for_wsi(
     dataloader_workers: int = 0,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
+    reader_type_fallbacks: Sequence[WSIReaderType] | None = None,
     mpp: float | None = None,
     custom_mpp_keys: Optional[list[str]] = None,
     min_tissue_proportion: float = 0.0,
@@ -297,6 +375,7 @@ def extract_conch_v15_features_for_wsi(
         dataloader_workers=dataloader_workers,
         device=device,
         reader_type=reader_type,
+        reader_type_fallbacks=reader_type_fallbacks,
         mpp=mpp,
         custom_mpp_keys=custom_mpp_keys,
         min_tissue_proportion=min_tissue_proportion,
