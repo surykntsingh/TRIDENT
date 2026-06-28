@@ -5,6 +5,7 @@ import warnings
 import multiprocessing as mp
 import torch 
 from typing import List, Tuple, Optional, Literal, Union
+from PIL import Image
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -489,7 +490,14 @@ class WSI:
         else:
             thumbnail_height = max_dimension
             thumbnail_width = int(thumbnail_height * self.width / self.height)
-        thumbnail = self.get_thumbnail((thumbnail_width, thumbnail_height))
+        try:
+            thumbnail = self.get_thumbnail((thumbnail_width, thumbnail_height))
+        except Exception as exc:
+            warnings.warn(
+                f"Thumbnail generation failed for '{self.slide_path}': {exc}. "
+                "Continuing tissue segmentation with a blank preview image."
+            )
+            thumbnail = Image.new("RGB", (thumbnail_width, thumbnail_height), (255, 255, 255))
 
         # dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=0, pin_memory=True)
 
