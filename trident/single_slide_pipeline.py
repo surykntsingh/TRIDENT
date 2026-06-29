@@ -49,6 +49,13 @@ def _clear_slide_contours(slide) -> None:
         slide.tissue_seg_path = None
 
 
+def _is_black_thumbnail_failure(slide, exc: Exception) -> bool:
+    if getattr(slide, "tiffslide_black_thumbnail_detected", False):
+        return True
+    message = str(exc).lower()
+    return "black thumbnail" in message or "entirely black thumbnail" in message
+
+
 def _extract_coords_with_segmenter(
     *,
     slide,
@@ -156,7 +163,7 @@ def extract_wsi_patch_features(
         }
         if wsi_array is not None:
             load_kwargs["wsi_array"] = wsi_array
-        if reader_candidate == "tiffslide" and len(reader_candidates) > 1:
+        if reader_candidate == "tiffslide":
             load_kwargs["allow_openslide_fallback"] = False
         try:
             slide_cm = load_wsi(**load_kwargs)
@@ -233,23 +240,40 @@ def _extract_wsi_patch_features_from_slide(
     # Submission containers tend to have very limited /dev/shm. Force
     # sequential DataLoader execution by default for reliability.
     slide.max_workers = dataloader_workers
-    if not coords_path.exists():
-        count = _extract_coords_with_segmenter(
-            slide=slide,
-            coords_path=coords_path,
-            coords_root=coords_root,
-            wsi_name=wsi_path.name,
-            segmenter=segmenter,
-            seg_conf_thresh=seg_conf_thresh,
-            mag=mag,
-            patch_size=patch_size,
-            overlap=overlap,
-            min_tissue_proportion=min_tissue_proportion,
-            remove_holes=remove_holes,
-            dataloader_workers=dataloader_workers,
-            device=device,
+    skip_segmentation = False
+    if coords_path.exists() and _coords_count(coords_path) == 0:
+        warnings.warn(
+            f"Existing coordinate file for '{wsi_path.name}' contains no patches; regenerating it."
         )
-        if fallback_segmenters and count == 0 and segmenter != "otsu":
+        coords_path.unlink()
+    if not coords_path.exists():
+        try:
+            count = _extract_coords_with_segmenter(
+                slide=slide,
+                coords_path=coords_path,
+                coords_root=coords_root,
+                wsi_name=wsi_path.name,
+                segmenter=segmenter,
+                seg_conf_thresh=seg_conf_thresh,
+                mag=mag,
+                patch_size=patch_size,
+                overlap=overlap,
+                min_tissue_proportion=min_tissue_proportion,
+                remove_holes=remove_holes,
+                dataloader_workers=dataloader_workers,
+                device=device,
+            )
+        except Exception as exc:
+            if not _is_black_thumbnail_failure(slide, exc):
+                raise
+            warnings.warn(
+                f"Skipping tissue segmentation for '{wsi_path.name}' because the selected "
+                "reader produced an entirely black thumbnail. Using unmasked whole-slide "
+                "coordinates instead."
+            )
+            count = 0
+            skip_segmentation = True
+        if not skip_segmentation and fallback_segmenters and count == 0 and segmenter != "otsu":
             if segmenter == "hest" and seg_conf_thresh > 0.1:
                 warnings.warn(
                     f"Retrying segmenter='hest' with seg_conf_thresh=0.1 for '{wsi_path.name}'."
@@ -270,7 +294,7 @@ def _extract_wsi_patch_features_from_slide(
                     dataloader_workers=dataloader_workers,
                     device=device,
                 )
-        if fallback_segmenters and count == 0 and segmenter != "otsu":
+        if not skip_segmentation and fallback_segmenters and count == 0 and segmenter != "otsu":
             warnings.warn(
                 f"Falling back to segmenter='otsu' for '{wsi_path.name}' before using unmasked coordinates."
             )
