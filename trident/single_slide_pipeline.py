@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import warnings
 from pathlib import Path
 from typing import Optional, Sequence
@@ -9,6 +10,15 @@ import h5py
 from trident.patch_encoder_models.load import encoder_factory
 from trident.segmentation_models.load import segmentation_model_factory
 from trident.wsi_objects.WSIFactory import WSIReaderType, load_wsi
+
+
+def _log(message: str, start_time: float | None = None) -> float:
+    now = time.monotonic()
+    if start_time is None:
+        print(f"[trident-single] {message}", flush=True)
+    else:
+        print(f"[trident-single] {message} ({now - start_time:.2f}s)", flush=True)
+    return now
 
 
 def _resolve_path(root: Path, path: str | Path | None) -> Path | None:
@@ -154,6 +164,7 @@ def extract_wsi_patch_features(
 
     last_reader_error: Exception | None = None
     for reader_candidate in reader_candidates:
+        stage_start = _log(f"initializing WSI reader {reader_candidate!r} for {wsi_path.name}")
         load_kwargs = {
             "slide_path": str(wsi_path),
             "reader_type": reader_candidate,
@@ -167,6 +178,7 @@ def extract_wsi_patch_features(
             load_kwargs["allow_openslide_fallback"] = False
         try:
             slide_cm = load_wsi(**load_kwargs)
+            _log(f"initialized WSI reader {reader_candidate!r} for {wsi_path.name}", stage_start)
         except Exception as exc:
             last_reader_error = exc
             warnings.warn(
@@ -248,6 +260,10 @@ def _extract_wsi_patch_features_from_slide(
         coords_path.unlink()
     if not coords_path.exists():
         try:
+            stage_start = _log(
+                f"extracting coordinates for {wsi_path.name} with segmenter={segmenter!r}, "
+                f"seg_conf_thresh={seg_conf_thresh}"
+            )
             count = _extract_coords_with_segmenter(
                 slide=slide,
                 coords_path=coords_path,
@@ -263,6 +279,7 @@ def _extract_wsi_patch_features_from_slide(
                 dataloader_workers=dataloader_workers,
                 device=device,
             )
+            _log(f"extracted {count} segmented coordinates for {wsi_path.name}", stage_start)
         except Exception as exc:
             if not _is_black_thumbnail_failure(slide, exc):
                 raise
@@ -315,6 +332,7 @@ def _extract_wsi_patch_features_from_slide(
                 device=device,
             )
         if count == 0:
+            stage_start = _log(f"extracting unmasked whole-slide coordinates for {wsi_path.name}")
             warnings.warn(
                 f"Falling back to unmasked whole-slide coordinates for '{wsi_path.name}'."
             )
@@ -326,6 +344,8 @@ def _extract_wsi_patch_features_from_slide(
                 overlap=overlap,
                 min_tissue_proportion=0.0,
             )
+            count = _coords_count(coords_path)
+            _log(f"extracted {count} unmasked coordinates for {wsi_path.name}", stage_start)
         if remove_artifacts or remove_penmarks:
             artifact_remover_model = segmentation_model_factory(
                 "grandqc_artifact",
@@ -349,6 +369,13 @@ def _extract_wsi_patch_features_from_slide(
                 min_tissue_proportion=0.0,
             )
 
+    coord_count = _coords_count(coords_path)
+    _log(
+        f"starting patch feature extraction for {wsi_path.name} "
+        f"with {coord_count} coordinates, batch_size={batch_size}, workers={dataloader_workers}"
+    )
+    stage_start = time.monotonic()
+
     encoder = encoder_factory(
         patch_encoder,
         weights_path=patch_encoder_weights,
@@ -360,9 +387,12 @@ def _extract_wsi_patch_features_from_slide(
         device=device,
         saveas=saveas,
         batch_limit=batch_size,
+        verbose=True,
     )
+    generated_path = Path(generated_path)
+    _log(f"saved patch features for {wsi_path.name} to {generated_path}", stage_start)
 
-    return Path(generated_path)
+    return generated_path
 
 
 def extract_conch_v15_features_for_wsi(
