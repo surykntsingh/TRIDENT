@@ -115,6 +115,7 @@ def extract_wsi_patch_features(
     remove_holes: bool = False,
     remove_artifacts: bool = False,
     remove_penmarks: bool = False,
+    fallback_segmenters: bool = True,
     saveas: str = "h5",
     features_dir: str | Path | None = None,
     reuse_existing: bool = True,
@@ -189,6 +190,7 @@ def extract_wsi_patch_features(
                     remove_holes=remove_holes,
                     remove_artifacts=remove_artifacts,
                     remove_penmarks=remove_penmarks,
+                    fallback_segmenters=fallback_segmenters,
                     saveas=saveas,
                 )
         except Exception as exc:
@@ -225,6 +227,7 @@ def _extract_wsi_patch_features_from_slide(
     remove_holes: bool,
     remove_artifacts: bool,
     remove_penmarks: bool,
+    fallback_segmenters: bool,
     saveas: str,
 ) -> Path:
     # Submission containers tend to have very limited /dev/shm. Force
@@ -246,7 +249,7 @@ def _extract_wsi_patch_features_from_slide(
             dataloader_workers=dataloader_workers,
             device=device,
         )
-        if count == 0 and segmenter != "otsu":
+        if fallback_segmenters and count == 0 and segmenter != "otsu":
             if segmenter == "hest" and seg_conf_thresh > 0.1:
                 warnings.warn(
                     f"Retrying segmenter='hest' with seg_conf_thresh=0.1 for '{wsi_path.name}'."
@@ -267,7 +270,7 @@ def _extract_wsi_patch_features_from_slide(
                     dataloader_workers=dataloader_workers,
                     device=device,
                 )
-        if count == 0 and segmenter != "otsu":
+        if fallback_segmenters and count == 0 and segmenter != "otsu":
             warnings.warn(
                 f"Falling back to segmenter='otsu' for '{wsi_path.name}' before using unmasked coordinates."
             )
@@ -360,6 +363,7 @@ def extract_conch_v15_features_for_wsi(
     remove_holes: bool = False,
     remove_artifacts: bool = False,
     remove_penmarks: bool = False,
+    fallback_segmenters: bool = True,
     reuse_existing: bool = True,
 ) -> Path:
     return extract_wsi_patch_features(
@@ -384,6 +388,7 @@ def extract_conch_v15_features_for_wsi(
         remove_holes=remove_holes,
         remove_artifacts=remove_artifacts,
         remove_penmarks=remove_penmarks,
+        fallback_segmenters=fallback_segmenters,
         saveas="h5",
         reuse_existing=reuse_existing,
     )
