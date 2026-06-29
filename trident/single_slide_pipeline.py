@@ -120,6 +120,7 @@ def extract_wsi_patch_features(
     batch_size: int = 32,
     segmentation_batch_size: int = 64,
     dataloader_workers: int = 0,
+    feature_dataloader_workers: int | None = None,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
     reader_type_fallbacks: Sequence[WSIReaderType] | None = None,
@@ -207,6 +208,7 @@ def extract_wsi_patch_features(
                     batch_size=batch_size,
                     segmentation_batch_size=segmentation_batch_size,
                     dataloader_workers=dataloader_workers,
+                    feature_dataloader_workers=feature_dataloader_workers,
                     device=device,
                     min_tissue_proportion=min_tissue_proportion,
                     remove_holes=remove_holes,
@@ -245,6 +247,7 @@ def _extract_wsi_patch_features_from_slide(
     batch_size: int,
     segmentation_batch_size: int,
     dataloader_workers: int,
+    feature_dataloader_workers: int | None,
     device: str,
     min_tissue_proportion: float,
     remove_holes: bool,
@@ -307,16 +310,21 @@ def _extract_wsi_patch_features_from_slide(
             )
 
     coord_count = _coords_count(coords_path)
+    if feature_dataloader_workers is not None:
+        slide.max_workers = feature_dataloader_workers
     _log(
         f"starting patch feature extraction for {wsi_path.name} "
-        f"with {coord_count} coordinates, batch_size={batch_size}, workers={dataloader_workers}"
+        f"with {coord_count} coordinates, batch_size={batch_size}, "
+        f"workers={slide.max_workers}"
     )
     stage_start = time.monotonic()
-
+    encoder_start = _log(f"loading patch encoder {patch_encoder!r}")
     encoder = encoder_factory(
         patch_encoder,
         weights_path=patch_encoder_weights,
     )
+    _log(f"loaded patch encoder {patch_encoder!r}", encoder_start)
+    extraction_start = _log(f"embedding patches for {wsi_path.name}")
     generated_path = slide.extract_patch_features(
         patch_encoder=encoder,
         coords_path=str(coords_path),
@@ -326,6 +334,7 @@ def _extract_wsi_patch_features_from_slide(
         batch_limit=batch_size,
     )
     generated_path = Path(generated_path)
+    _log(f"embedded patches for {wsi_path.name}", extraction_start)
     _log(f"saved patch features for {wsi_path.name} to {generated_path}", stage_start)
 
     return generated_path
@@ -345,6 +354,7 @@ def extract_conch_v15_features_for_wsi(
     batch_size: int = 32,
     segmentation_batch_size: int = 64,
     dataloader_workers: int = 0,
+    feature_dataloader_workers: int | None = None,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
     reader_type_fallbacks: Sequence[WSIReaderType] | None = None,
@@ -371,6 +381,7 @@ def extract_conch_v15_features_for_wsi(
         batch_size=batch_size,
         segmentation_batch_size=segmentation_batch_size,
         dataloader_workers=dataloader_workers,
+        feature_dataloader_workers=feature_dataloader_workers,
         device=device,
         reader_type=reader_type,
         reader_type_fallbacks=reader_type_fallbacks,
