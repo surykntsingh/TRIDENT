@@ -124,7 +124,6 @@ def extract_wsi_patch_features(
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
     reader_type_fallbacks: Sequence[WSIReaderType] | None = None,
-    feature_reader_type: Optional[WSIReaderType] = None,
     mpp: float | None = None,
     custom_mpp_keys: Optional[list[str]] = None,
     min_tissue_proportion: float = 0.0,
@@ -211,10 +210,6 @@ def extract_wsi_patch_features(
                     dataloader_workers=dataloader_workers,
                     feature_dataloader_workers=feature_dataloader_workers,
                     device=device,
-                    feature_reader_type=feature_reader_type,
-                    wsi_array=wsi_array,
-                    mpp=mpp,
-                    custom_mpp_keys=custom_mpp_keys,
                     min_tissue_proportion=min_tissue_proportion,
                     remove_holes=remove_holes,
                     remove_artifacts=remove_artifacts,
@@ -254,10 +249,6 @@ def _extract_wsi_patch_features_from_slide(
     dataloader_workers: int,
     feature_dataloader_workers: int | None,
     device: str,
-    feature_reader_type: Optional[WSIReaderType],
-    wsi_array,
-    mpp: float | None,
-    custom_mpp_keys: Optional[list[str]],
     min_tissue_proportion: float,
     remove_holes: bool,
     remove_artifacts: bool,
@@ -318,69 +309,13 @@ def _extract_wsi_patch_features_from_slide(
                 min_tissue_proportion=0.0,
             )
 
-    if feature_reader_type is not None:
-        stage_start = _log(f"initializing feature WSI reader {feature_reader_type!r} for {wsi_path.name}")
-        load_kwargs = {
-            "slide_path": str(wsi_path),
-            "reader_type": feature_reader_type,
-            "lazy_init": False,
-            "mpp": mpp,
-            "custom_mpp_keys": custom_mpp_keys,
-        }
-        if wsi_array is not None:
-            load_kwargs["wsi_array"] = wsi_array
-        if feature_reader_type == "tiffslide":
-            load_kwargs["allow_openslide_fallback"] = False
-        feature_slide_cm = load_wsi(**load_kwargs)
-        _log(f"initialized feature WSI reader {feature_reader_type!r} for {wsi_path.name}", stage_start)
-        with feature_slide_cm as feature_slide:
-            return _extract_features_from_coords(
-                slide=feature_slide,
-                wsi_path=wsi_path,
-                coords_path=coords_path,
-                resolved_features_dir=resolved_features_dir,
-                patch_encoder=patch_encoder,
-                patch_encoder_weights=patch_encoder_weights,
-                batch_size=batch_size,
-                device=device,
-                saveas=saveas,
-                feature_dataloader_workers=feature_dataloader_workers,
-            )
-
-    return _extract_features_from_coords(
-        slide=slide,
-        wsi_path=wsi_path,
-        coords_path=coords_path,
-        resolved_features_dir=resolved_features_dir,
-        patch_encoder=patch_encoder,
-        patch_encoder_weights=patch_encoder_weights,
-        batch_size=batch_size,
-        device=device,
-        saveas=saveas,
-        feature_dataloader_workers=feature_dataloader_workers,
-    )
-
-
-def _extract_features_from_coords(
-    *,
-    slide,
-    wsi_path: Path,
-    coords_path: Path,
-    resolved_features_dir: Path,
-    patch_encoder: str,
-    patch_encoder_weights: str | None,
-    batch_size: int,
-    device: str,
-    saveas: str,
-    feature_dataloader_workers: int | None,
-) -> Path:
     coord_count = _coords_count(coords_path)
     if feature_dataloader_workers is not None:
         slide.max_workers = feature_dataloader_workers
     _log(
         f"starting patch feature extraction for {wsi_path.name} "
         f"with {coord_count} coordinates, batch_size={batch_size}, "
-        f"workers={slide.max_workers}, reader={slide.__class__.__name__}"
+        f"workers={slide.max_workers}"
     )
     stage_start = time.monotonic()
     encoder_start = _log(f"loading patch encoder {patch_encoder!r}")
@@ -423,7 +358,6 @@ def extract_conch_v15_features_for_wsi(
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
     reader_type_fallbacks: Sequence[WSIReaderType] | None = None,
-    feature_reader_type: Optional[WSIReaderType] = None,
     mpp: float | None = None,
     custom_mpp_keys: Optional[list[str]] = None,
     min_tissue_proportion: float = 0.0,
@@ -451,7 +385,6 @@ def extract_conch_v15_features_for_wsi(
         device=device,
         reader_type=reader_type,
         reader_type_fallbacks=reader_type_fallbacks,
-        feature_reader_type=feature_reader_type,
         mpp=mpp,
         custom_mpp_keys=custom_mpp_keys,
         min_tissue_proportion=min_tissue_proportion,
