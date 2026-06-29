@@ -74,6 +74,12 @@ class OpenSlideWSI(WSI):
                 self.mag = self._fetch_magnification(self.custom_mpp_keys)
                 self._initialized = True
 
+            except openslide.lowlevel.OpenSlideUnsupportedFormatError as e:
+                raise RuntimeError(
+                    f"Failed to initialize WSI with OpenSlide: unsupported image format for '{self.slide_path}'. "
+                    "This often occurs for generic single-level stripped TIFFs, such as AdobeDeflate RGB TIFFs, "
+                    "that OpenSlide does not treat as WSI inputs."
+                ) from e
             except Exception as e:
                 raise RuntimeError(f"Failed to initialize WSI with OpenSlide: {e}") from e
 
