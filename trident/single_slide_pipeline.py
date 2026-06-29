@@ -317,7 +317,6 @@ def _extract_wsi_patch_features_from_slide(
         device=device,
         saveas=saveas,
         batch_limit=batch_size,
-        verbose=True,
     )
     generated_path = Path(generated_path)
     _log(f"saved patch features for {wsi_path.name} to {generated_path}", stage_start)
