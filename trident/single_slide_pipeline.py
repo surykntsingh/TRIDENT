@@ -59,13 +59,6 @@ def _clear_slide_contours(slide) -> None:
         slide.tissue_seg_path = None
 
 
-def _is_black_thumbnail_failure(slide, exc: Exception) -> bool:
-    if getattr(slide, "tiffslide_black_thumbnail_detected", False):
-        return True
-    message = str(exc).lower()
-    return "black thumbnail" in message or "entirely black thumbnail" in message
-
-
 def _extract_coords_with_segmenter(
     *,
     slide,
@@ -103,7 +96,7 @@ def _extract_coords_with_segmenter(
     )
     count = _coords_count(coords_path)
     if count == 0:
-        warnings.warn(
+        raise RuntimeError(
             f"No tissue coordinates found for '{wsi_name}' using segmenter='{segmenter}'."
         )
     return count
@@ -155,6 +148,11 @@ def extract_wsi_patch_features(
         return feature_path
 
     patch_encoder_weights = str(patch_encoder_weights_path) if patch_encoder_weights_path is not None else None
+    if not reuse_existing and coords_path.exists():
+        warnings.warn(
+            f"Removing existing coordinate file for '{wsi_path.name}' because reuse_existing=False."
+        )
+        coords_path.unlink()
 
     reader_candidates = list(reader_type_fallbacks or [])
     if reader_type is not None:
@@ -252,100 +250,32 @@ def _extract_wsi_patch_features_from_slide(
     # Submission containers tend to have very limited /dev/shm. Force
     # sequential DataLoader execution by default for reliability.
     slide.max_workers = dataloader_workers
-    skip_segmentation = False
     if coords_path.exists() and _coords_count(coords_path) == 0:
         warnings.warn(
             f"Existing coordinate file for '{wsi_path.name}' contains no patches; regenerating it."
         )
         coords_path.unlink()
     if not coords_path.exists():
-        try:
-            stage_start = _log(
-                f"extracting coordinates for {wsi_path.name} with segmenter={segmenter!r}, "
-                f"seg_conf_thresh={seg_conf_thresh}"
-            )
-            count = _extract_coords_with_segmenter(
-                slide=slide,
-                coords_path=coords_path,
-                coords_root=coords_root,
-                wsi_name=wsi_path.name,
-                segmenter=segmenter,
-                seg_conf_thresh=seg_conf_thresh,
-                mag=mag,
-                patch_size=patch_size,
-                overlap=overlap,
-                min_tissue_proportion=min_tissue_proportion,
-                remove_holes=remove_holes,
-                dataloader_workers=dataloader_workers,
-                device=device,
-            )
-            _log(f"extracted {count} segmented coordinates for {wsi_path.name}", stage_start)
-        except Exception as exc:
-            if not _is_black_thumbnail_failure(slide, exc):
-                raise
-            warnings.warn(
-                f"Skipping tissue segmentation for '{wsi_path.name}' because the selected "
-                "reader produced an entirely black thumbnail. Using unmasked whole-slide "
-                "coordinates instead."
-            )
-            count = 0
-            skip_segmentation = True
-        if not skip_segmentation and fallback_segmenters and count == 0 and segmenter != "otsu":
-            if segmenter == "hest" and seg_conf_thresh > 0.1:
-                warnings.warn(
-                    f"Retrying segmenter='hest' with seg_conf_thresh=0.1 for '{wsi_path.name}'."
-                )
-                _clear_slide_contours(slide)
-                count = _extract_coords_with_segmenter(
-                    slide=slide,
-                    coords_path=coords_path,
-                    coords_root=coords_root,
-                    wsi_name=wsi_path.name,
-                    segmenter="hest",
-                    seg_conf_thresh=0.1,
-                    mag=mag,
-                    patch_size=patch_size,
-                    overlap=overlap,
-                    min_tissue_proportion=min_tissue_proportion,
-                    remove_holes=remove_holes,
-                    dataloader_workers=dataloader_workers,
-                    device=device,
-                )
-        if not skip_segmentation and fallback_segmenters and count == 0 and segmenter != "otsu":
-            warnings.warn(
-                f"Falling back to segmenter='otsu' for '{wsi_path.name}' before using unmasked coordinates."
-            )
-            _clear_slide_contours(slide)
-            count = _extract_coords_with_segmenter(
-                slide=slide,
-                coords_path=coords_path,
-                coords_root=coords_root,
-                wsi_name=wsi_path.name,
-                segmenter="otsu",
-                seg_conf_thresh=seg_conf_thresh,
-                mag=mag,
-                patch_size=patch_size,
-                overlap=overlap,
-                min_tissue_proportion=min_tissue_proportion,
-                remove_holes=remove_holes,
-                dataloader_workers=dataloader_workers,
-                device=device,
-            )
-        if count == 0:
-            stage_start = _log(f"extracting unmasked whole-slide coordinates for {wsi_path.name}")
-            warnings.warn(
-                f"Falling back to unmasked whole-slide coordinates for '{wsi_path.name}'."
-            )
-            _clear_slide_contours(slide)
-            slide.extract_tissue_coords(
-                target_mag=mag,
-                patch_size=patch_size,
-                save_coords=str(coords_root),
-                overlap=overlap,
-                min_tissue_proportion=0.0,
-            )
-            count = _coords_count(coords_path)
-            _log(f"extracted {count} unmasked coordinates for {wsi_path.name}", stage_start)
+        stage_start = _log(
+            f"extracting coordinates for {wsi_path.name} with segmenter={segmenter!r}, "
+            f"seg_conf_thresh={seg_conf_thresh}"
+        )
+        count = _extract_coords_with_segmenter(
+            slide=slide,
+            coords_path=coords_path,
+            coords_root=coords_root,
+            wsi_name=wsi_path.name,
+            segmenter=segmenter,
+            seg_conf_thresh=seg_conf_thresh,
+            mag=mag,
+            patch_size=patch_size,
+            overlap=overlap,
+            min_tissue_proportion=min_tissue_proportion,
+            remove_holes=remove_holes,
+            dataloader_workers=dataloader_workers,
+            device=device,
+        )
+        _log(f"extracted {count} segmented coordinates for {wsi_path.name}", stage_start)
         if remove_artifacts or remove_penmarks:
             artifact_remover_model = segmentation_model_factory(
                 "grandqc_artifact",
