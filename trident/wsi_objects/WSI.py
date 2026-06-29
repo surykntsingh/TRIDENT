@@ -483,14 +483,6 @@ class WSI:
 
         self._lazy_initialize()
         segmentation_model.to(device)
-        max_dimension = 1000
-        if self.width > self.height:
-            thumbnail_width = max_dimension
-            thumbnail_height = int(thumbnail_width * self.height / self.width)
-        else:
-            thumbnail_height = max_dimension
-            thumbnail_width = int(thumbnail_height * self.width / self.height)
-        thumbnail = self.get_thumbnail((thumbnail_width, thumbnail_height))
 
         # dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=0, pin_memory=True)
 
@@ -522,6 +514,14 @@ class WSI:
             contour_scale=1/mpp_reduction_factor
         )
         if job_dir is not None:
+            max_dimension = 1000
+            if self.width > self.height:
+                thumbnail_width = max_dimension
+                thumbnail_height = int(thumbnail_width * self.height / self.width)
+            else:
+                thumbnail_height = max_dimension
+                thumbnail_width = int(thumbnail_height * self.width / self.height)
+            thumbnail = self.get_thumbnail((thumbnail_width, thumbnail_height))
 
             # Save thumbnail image
             thumbnail_saveto = os.path.join(job_dir, 'thumbnails', f'{self.name}.jpg')

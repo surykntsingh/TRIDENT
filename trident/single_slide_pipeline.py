@@ -74,19 +74,22 @@ def _extract_coords_with_segmenter(
     remove_holes: bool,
     dataloader_workers: int,
     device: str,
+    segmentation_batch_size: int,
 ) -> int:
     segmentation_model = segmentation_model_factory(
         model_name=segmenter,
         confidence_thresh=seg_conf_thresh,
     )
-    slide.segment_tissue(
+    gdf_contours = slide.segment_tissue(
         segmentation_model=segmentation_model,
         target_mag=segmentation_model.target_mag,
-        job_dir=str(coords_root.parent),
+        job_dir=None,
         device=_default_segmentation_device(segmenter, device),
         holes_are_tissue=not remove_holes,
+        batch_size=segmentation_batch_size,
         num_workers=dataloader_workers,
     )
+    slide.gdf_contours = gdf_contours
     slide.extract_tissue_coords(
         target_mag=mag,
         patch_size=patch_size,
@@ -115,6 +118,7 @@ def extract_wsi_patch_features(
     patch_size: int = 512,
     overlap: int = 0,
     batch_size: int = 32,
+    segmentation_batch_size: int = 64,
     dataloader_workers: int = 0,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
@@ -201,6 +205,7 @@ def extract_wsi_patch_features(
                     patch_size=patch_size,
                     overlap=overlap,
                     batch_size=batch_size,
+                    segmentation_batch_size=segmentation_batch_size,
                     dataloader_workers=dataloader_workers,
                     device=device,
                     min_tissue_proportion=min_tissue_proportion,
@@ -238,6 +243,7 @@ def _extract_wsi_patch_features_from_slide(
     patch_size: int,
     overlap: int,
     batch_size: int,
+    segmentation_batch_size: int,
     dataloader_workers: int,
     device: str,
     min_tissue_proportion: float,
@@ -274,6 +280,7 @@ def _extract_wsi_patch_features_from_slide(
             remove_holes=remove_holes,
             dataloader_workers=dataloader_workers,
             device=device,
+            segmentation_batch_size=segmentation_batch_size,
         )
         _log(f"extracted {count} segmented coordinates for {wsi_path.name}", stage_start)
         if remove_artifacts or remove_penmarks:
@@ -336,6 +343,7 @@ def extract_conch_v15_features_for_wsi(
     patch_size: int = 512,
     overlap: int = 0,
     batch_size: int = 32,
+    segmentation_batch_size: int = 64,
     dataloader_workers: int = 0,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
@@ -361,6 +369,7 @@ def extract_conch_v15_features_for_wsi(
         patch_size=patch_size,
         overlap=overlap,
         batch_size=batch_size,
+        segmentation_batch_size=segmentation_batch_size,
         dataloader_workers=dataloader_workers,
         device=device,
         reader_type=reader_type,
