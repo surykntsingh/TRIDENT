@@ -155,6 +155,8 @@ def extract_wsi_patch_features(
         }
         if wsi_array is not None:
             load_kwargs["wsi_array"] = wsi_array
+        if reader_candidate == "tiffslide" and len(reader_candidates) > 1:
+            load_kwargs["allow_openslide_fallback"] = False
         try:
             slide_cm = load_wsi(**load_kwargs)
         except Exception as exc:

@@ -36,7 +36,8 @@ class TiffSlideWSI(WSI):
         "aperio.AppMag",
     )
 
-    def __init__(self, slide_path: str, **kwargs: Any) -> None:
+    def __init__(self, slide_path: str, allow_openslide_fallback: bool = True, **kwargs: Any) -> None:
+        self.allow_openslide_fallback = allow_openslide_fallback
         super().__init__(slide_path, **kwargs)
 
     @staticmethod
@@ -44,6 +45,8 @@ class TiffSlideWSI(WSI):
         return not np.any(np.asarray(image))
 
     def _init_openslide_fallback(self) -> Any:
+        if not self.allow_openslide_fallback:
+            raise RuntimeError("OpenSlide fallback is disabled for this TiffSlideWSI instance.")
         from openslide import OpenSlide
 
         return OpenSlide(self.slide_path)
@@ -80,6 +83,8 @@ class TiffSlideWSI(WSI):
         try:
             self.img = TiffSlide(self.slide_path)
         except Exception as tiffslide_init_error:
+            if not self.allow_openslide_fallback:
+                raise RuntimeError(f"Failed to initialize WSI with tiffslide: {tiffslide_init_error}") from tiffslide_init_error
             warnings.warn(
                 f"tiffslide failed to initialize '{self.slide_path}': {tiffslide_init_error}. "
                 "Falling back to OpenSlide."
@@ -180,6 +185,10 @@ class TiffSlideWSI(WSI):
         try:
             region = self._read_region_from_backend(self.img, location, level, size)
         except Exception as e:
+            if not self.allow_openslide_fallback:
+                raise RuntimeError(
+                    f"tiffslide failed to read region at {location}, level {level}: {e}"
+                ) from e
             warnings.warn(
                 f"Corrupt region at {location}, level {level}: {e}. "
                 "Attempting OpenSlide fallback."
@@ -212,6 +221,8 @@ class TiffSlideWSI(WSI):
                 raise ValueError("tiffslide returned an entirely black thumbnail")
             return thumbnail
         except Exception as e:
+            if not self.allow_openslide_fallback:
+                raise RuntimeError(f"tiffslide failed to generate thumbnail: {e}") from e
             warnings.warn(
                 f"Thumbnail generation failed for '{self.slide_path}' with tiffslide: {e}. "
                 "Falling back to OpenSlide."
