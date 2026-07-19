@@ -4,14 +4,16 @@ from typing import Optional, Literal, Union
 from trident.IO import splitext
 from trident.wsi_objects.OpenSlideWSI import OpenSlideWSI
 from trident.wsi_objects.TiffSlideWSI import TiffSlideWSI
+from trident.wsi_objects.FastSlideWSI import FastSlideWSI
 from trident.wsi_objects.ImageWSI import ImageWSI
 from trident.wsi_objects.ArrayWSI import ArrayWSI
 from trident.wsi_objects.CuCIMWSI import CuCIMWSI
 from trident.wsi_objects.SDPCWSI import SDPCWSI
 from trident.wsi_objects.OMEZarrWSI import OMEZarrWSI
 from trident.wsi_objects.CZIWSI import CZIWSI
-WSIReaderType = Literal['openslide', 'tiffslide', 'image', 'array', 'cucim', 'sdpc', 'omezarr', 'czi']
+WSIReaderType = Literal['openslide', 'tiffslide', 'fastslide', 'image', 'array', 'cucim', 'sdpc', 'omezarr', 'czi']
 TIFFSLIDE_EXTENSIONS = {'.tif', '.tiff', '.ome.tif', '.ome.tiff'}
+FASTSLIDE_EXTENSIONS = {'.svs', '.tif', '.tiff', '.ome.tif', '.ome.tiff', '.mrxs', '.qptiff', '.czi'}
 OPENSLIDE_EXTENSIONS = {'.svs', '.ndpi', '.vms', '.vmu', '.scn', '.mrxs', '.dcm'}
 CUCIM_EXTENSIONS = {'.svs', '.tif', '.tiff'}
 SDPC_EXTENSIONS = {'.sdpc'}
@@ -25,7 +27,7 @@ def load_wsi(
     reader_type: Optional[WSIReaderType] = None,
     lazy_init: bool = False,
     **kwargs
-) -> Union[OpenSlideWSI, TiffSlideWSI, ImageWSI, ArrayWSI, CuCIMWSI, SDPCWSI, OMEZarrWSI, CZIWSI]:
+) -> Union[OpenSlideWSI, TiffSlideWSI, FastSlideWSI, ImageWSI, ArrayWSI, CuCIMWSI, SDPCWSI, OMEZarrWSI, CZIWSI]:
     """
     Load a whole-slide image (WSI) using the appropriate backend.
 
@@ -37,7 +39,7 @@ def load_wsi(
     Parameters:
         slide_path (str):
             Path to the whole-slide image.
-        reader_type ({'openslide', 'tiffslide', 'image', 'array', 'cucim', 'sdpc', 'omezarr', 'czi'}, optional):
+        reader_type ({'openslide', 'tiffslide', 'fastslide', 'image', 'array', 'cucim', 'sdpc', 'omezarr', 'czi'}, optional):
             Manually specify the WSI reader to use. If None (default), selection is automatic based on file extension.
         lazy_init (bool, optional):
             Whether to defer backend initialization. Defaults to False for API convenience:
@@ -46,7 +48,7 @@ def load_wsi(
             Additional keyword arguments passed to the WSI reader constructor.
 
     Returns:
-        Union[OpenSlideWSI, TiffSlideWSI, ImageWSI, CuCIMWSI, SDPCWSI, OMEZarrWSI, CZIWSI]:
+        Union[OpenSlideWSI, TiffSlideWSI, FastSlideWSI, ImageWSI, CuCIMWSI, SDPCWSI, OMEZarrWSI, CZIWSI]:
             An instance of the appropriate WSI reader.
 
     Raises:
@@ -57,13 +59,26 @@ def load_wsi(
     _, ext = splitext(slide_path)
     ext = ext.lower()
 
-    assert reader_type in ['openslide', 'tiffslide', 'image', 'array', 'cucim', 'sdpc', 'omezarr', 'czi', None], f"Unknown reader_type: {reader_type}. Choose from 'openslide', 'tiffslide', 'image', 'array', 'cucim', 'sdpc', 'omezarr', or 'czi'."
+    valid_reader_types = ['openslide', 'tiffslide', 'fastslide', 'image', 'array', 'cucim', 'sdpc', 'omezarr', 'czi', None]
+    assert reader_type in valid_reader_types, (
+        f"Unknown reader_type: {reader_type}. Choose from 'openslide', 'tiffslide', "
+        "'fastslide', 'image', 'array', 'cucim', 'sdpc', 'omezarr', or 'czi'."
+    )
 
     if reader_type == 'openslide':
         return OpenSlideWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)
 
     elif reader_type == 'tiffslide':
         return TiffSlideWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)
+
+    elif reader_type == 'fastslide':
+        if ext in FASTSLIDE_EXTENSIONS:
+            return FastSlideWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)
+        else:
+            raise ValueError(
+                f"Unsupported file format '{ext}' for FastSlide. "
+                f"Supported whole-slide image formats are: {', '.join(FASTSLIDE_EXTENSIONS)}."
+            )
 
     elif reader_type == 'image':
         return ImageWSI(slide_path=slide_path, lazy_init=lazy_init, **kwargs)

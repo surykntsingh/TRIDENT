@@ -52,13 +52,6 @@ def _feature_count(feature_path: Path) -> int:
         return int(h5_file["features"].shape[0])
 
 
-def _clear_slide_contours(slide) -> None:
-    if hasattr(slide, "gdf_contours"):
-        delattr(slide, "gdf_contours")
-    if hasattr(slide, "tissue_seg_path"):
-        slide.tissue_seg_path = None
-
-
 def _extract_coords_with_segmenter(
     *,
     slide,
@@ -120,10 +113,10 @@ def extract_wsi_patch_features(
     batch_size: int = 32,
     segmentation_batch_size: int = 64,
     dataloader_workers: int = 0,
-    feature_dataloader_workers: int | None = None,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
     reader_type_fallbacks: Sequence[WSIReaderType] | None = None,
+    fastslide_apply_icc: bool = False,
     mpp: float | None = None,
     custom_mpp_keys: Optional[list[str]] = None,
     min_tissue_proportion: float = 0.0,
@@ -179,6 +172,8 @@ def extract_wsi_patch_features(
             load_kwargs["wsi_array"] = wsi_array
         if reader_candidate == "tiffslide":
             load_kwargs["allow_openslide_fallback"] = False
+        if reader_candidate == "fastslide":
+            load_kwargs["apply_icc"] = fastslide_apply_icc
         try:
             slide_cm = load_wsi(**load_kwargs)
             _log(f"initialized WSI reader {reader_candidate!r} for {wsi_path.name}", stage_start)
@@ -208,8 +203,8 @@ def extract_wsi_patch_features(
                     batch_size=batch_size,
                     segmentation_batch_size=segmentation_batch_size,
                     dataloader_workers=dataloader_workers,
-                    feature_dataloader_workers=feature_dataloader_workers,
                     device=device,
+                    fastslide_apply_icc=fastslide_apply_icc,
                     min_tissue_proportion=min_tissue_proportion,
                     remove_holes=remove_holes,
                     remove_artifacts=remove_artifacts,
@@ -247,8 +242,8 @@ def _extract_wsi_patch_features_from_slide(
     batch_size: int,
     segmentation_batch_size: int,
     dataloader_workers: int,
-    feature_dataloader_workers: int | None,
     device: str,
+    fastslide_apply_icc: bool,
     min_tissue_proportion: float,
     remove_holes: bool,
     remove_artifacts: bool,
@@ -310,8 +305,6 @@ def _extract_wsi_patch_features_from_slide(
             )
 
     coord_count = _coords_count(coords_path)
-    if feature_dataloader_workers is not None:
-        slide.max_workers = feature_dataloader_workers
     _log(
         f"starting patch feature extraction for {wsi_path.name} "
         f"with {coord_count} coordinates, batch_size={batch_size}, "
@@ -354,10 +347,10 @@ def extract_conch_v15_features_for_wsi(
     batch_size: int = 32,
     segmentation_batch_size: int = 64,
     dataloader_workers: int = 0,
-    feature_dataloader_workers: int | None = None,
     device: str = "cuda:0",
     reader_type: Optional[WSIReaderType] = None,
     reader_type_fallbacks: Sequence[WSIReaderType] | None = None,
+    fastslide_apply_icc: bool = False,
     mpp: float | None = None,
     custom_mpp_keys: Optional[list[str]] = None,
     min_tissue_proportion: float = 0.0,
@@ -381,10 +374,10 @@ def extract_conch_v15_features_for_wsi(
         batch_size=batch_size,
         segmentation_batch_size=segmentation_batch_size,
         dataloader_workers=dataloader_workers,
-        feature_dataloader_workers=feature_dataloader_workers,
         device=device,
         reader_type=reader_type,
         reader_type_fallbacks=reader_type_fallbacks,
+        fastslide_apply_icc=fastslide_apply_icc,
         mpp=mpp,
         custom_mpp_keys=custom_mpp_keys,
         min_tissue_proportion=min_tissue_proportion,

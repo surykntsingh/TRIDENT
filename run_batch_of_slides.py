@@ -114,8 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
                          'MPP value. Useful when slides share a known resolution/magnification '
                          '(e.g. 0.5 for 20x, 0.25 for 40x). A per-slide `mpp` column in '
                          '`--custom_list_of_wsis` takes precedence over this value.')
-    parser.add_argument('--reader_type', type=str, choices=['openslide', 'tiffslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi'], default=None,
-                    help='Force the use of a specific WSI image reader. Options are ["openslide", "tiffslide", "image", "cucim", "sdpc", "omezarr", "czi"]. Defaults to None (auto-determine which reader to use).')
+    parser.add_argument('--reader_type', type=str, choices=['openslide', 'tiffslide', 'fastslide', 'image', 'cucim', 'sdpc', 'omezarr', 'czi'], default=None,
+                    help='Force the use of a specific WSI image reader. Options are ["openslide", "tiffslide", "fastslide", "image", "cucim", "sdpc", "omezarr", "czi"]. Defaults to None (auto-determine which reader to use).')
     parser.add_argument("--search_nested", action="store_true",
                         help=("If set, recursively search for whole-slide images (WSIs) within all subdirectories of "
                               "`wsi_source`. Uses `os.walk` to include slides from nested folders. "
