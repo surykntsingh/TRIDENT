@@ -445,7 +445,8 @@ class WSI:
         batch_size: int = 16,
         device: str = 'cuda:0',
         verbose=False,
-        num_workers=None
+        num_workers=None,
+        save_visualizations: bool = True,
     ) -> Union[str, gpd.GeoDataFrame]:
         """
         Segment tissue regions in the WSI using a specified segmentation model.
@@ -514,20 +515,6 @@ class WSI:
             contour_scale=1/mpp_reduction_factor
         )
         if job_dir is not None:
-            max_dimension = 1000
-            if self.width > self.height:
-                thumbnail_width = max_dimension
-                thumbnail_height = int(thumbnail_width * self.height / self.width)
-            else:
-                thumbnail_height = max_dimension
-                thumbnail_width = int(thumbnail_height * self.width / self.height)
-            thumbnail = self.get_thumbnail((thumbnail_width, thumbnail_height))
-
-            # Save thumbnail image
-            thumbnail_saveto = os.path.join(job_dir, 'thumbnails', f'{self.name}.jpg')
-            os.makedirs(os.path.dirname(thumbnail_saveto), exist_ok=True)
-            thumbnail.save(thumbnail_saveto)
-
             # Save geopandas contours
             gdf_saveto = os.path.join(job_dir, 'contours_geojson', f'{self.name}.geojson')
             os.makedirs(os.path.dirname(gdf_saveto), exist_ok=True)
@@ -536,10 +523,25 @@ class WSI:
             self.gdf_contours = gdf_contours
             self.tissue_seg_path = gdf_saveto
 
-            # Draw the contours on the thumbnail image
-            contours_saveto = os.path.join(job_dir, 'contours', f'{self.name}.jpg')
-            annotated = np.array(thumbnail)
-            overlay_gdf_on_thumbnail(gdf_contours, annotated, contours_saveto, thumbnail_width / self.width)
+            if save_visualizations:
+                max_dimension = 1000
+                if self.width > self.height:
+                    thumbnail_width = max_dimension
+                    thumbnail_height = int(thumbnail_width * self.height / self.width)
+                else:
+                    thumbnail_height = max_dimension
+                    thumbnail_width = int(thumbnail_height * self.width / self.height)
+                thumbnail = self.get_thumbnail((thumbnail_width, thumbnail_height))
+
+                # Save thumbnail image
+                thumbnail_saveto = os.path.join(job_dir, 'thumbnails', f'{self.name}.jpg')
+                os.makedirs(os.path.dirname(thumbnail_saveto), exist_ok=True)
+                thumbnail.save(thumbnail_saveto)
+
+                # Draw the contours on the thumbnail image
+                contours_saveto = os.path.join(job_dir, 'contours', f'{self.name}.jpg')
+                annotated = np.array(thumbnail)
+                overlay_gdf_on_thumbnail(gdf_contours, annotated, contours_saveto, thumbnail_width / self.width)
 
             return gdf_saveto
         else:

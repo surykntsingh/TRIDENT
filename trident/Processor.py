@@ -16,7 +16,10 @@ from trident.IO import create_lock, remove_lock, is_locked, update_log, collect_
 from trident.State import make_slide_ref, make_attempt, update_task_state
 from trident.Maintenance import deprecated
 from trident.wsi_objects.WSIFactory import (
+    FASTSLIDE_EXTENSIONS,
     OPENSLIDE_EXTENSIONS,
+    TIFFSLIDE_EXTENSIONS,
+    CUCIM_EXTENSIONS,
     PIL_EXTENSIONS,
     SDPC_EXTENSIONS,
     OMEZARR_EXTENSIONS,
@@ -125,11 +128,15 @@ class Processor:
         self.wsi_source = wsi_source
         self.wsi_ext = wsi_ext or (
             list(PIL_EXTENSIONS)
+            + list(TIFFSLIDE_EXTENSIONS)
+            + list(FASTSLIDE_EXTENSIONS)
             + list(OPENSLIDE_EXTENSIONS)
+            + list(CUCIM_EXTENSIONS)
             + list(SDPC_EXTENSIONS)
             + list(OMEZARR_EXTENSIONS)
             + list(CZI_EXTENSIONS)
         )
+        self.wsi_ext = sorted(set(self.wsi_ext))
         self.skip_errors = skip_errors
         self.custom_mpp_keys = custom_mpp_keys
         self.max_workers = max_workers
@@ -278,6 +285,7 @@ class Processor:
         batch_size: int = 16,
         artifact_remover_model: torch.nn.Module = None,
         device: str = 'cuda:0', 
+        save_visualizations: bool = True,
     ) -> str:
         """
         The `run_segmentation_job` function performs tissue segmentation on all slides managed by the processor. 
@@ -312,7 +320,10 @@ class Processor:
         >>> processor.run_segmentation_job(segmentation_model=model, seg_mag=20)
         """
         saveto = os.path.join(self.job_dir, 'contours')
-        os.makedirs(saveto, exist_ok=True)
+        geojson_dir = os.path.join(self.job_dir, 'contours_geojson')
+        if save_visualizations:
+            os.makedirs(saveto, exist_ok=True)
+        os.makedirs(geojson_dir, exist_ok=True)
 
         sig = signature(self.run_segmentation_job)
         local_attrs = {k: v for k, v in locals().items() if k in sig.parameters}
@@ -337,8 +348,12 @@ class Processor:
                 "mag": getattr(wsi, "mag", None),
                 "level_count": getattr(wsi, "level_count", None),
             }
-            # Check if contour already exists
-            if os.path.exists(os.path.join(saveto, f'{wsi.name}.jpg')) and not is_locked(os.path.join(saveto, f'{wsi.name}.jpg')):
+            contour_geojson = os.path.join(geojson_dir, f'{wsi.name}.geojson')
+            contour_jpg = os.path.join(saveto, f'{wsi.name}.jpg')
+
+            # Check if segmentation already exists. GeoJSON is the artifact
+            # required by coords/features; JPEGs are optional visualizations.
+            if os.path.exists(contour_geojson) and not is_locked(contour_geojson):
                 self.loop.set_postfix_str(f'{wsi.name} already segmented. Skipping...')
                 update_log(os.path.join(self.job_dir, '_logs_segmentation.txt'), f'{wsi.name}{wsi.ext}', 'Tissue segmented.')
                 try:
@@ -348,7 +363,7 @@ class Processor:
                         "segmentation",
                         "skipped",
                         reason="already_segmented",
-                        outputs={"contour_jpg": os.path.join(saveto, f"{wsi.name}.jpg")},
+                        outputs={"contour_geojson": contour_geojson},
                         wsi_meta=wsi_meta,
                     )
                 except Exception:
@@ -356,7 +371,7 @@ class Processor:
                 continue
 
             # Check if another process has claimed this slide
-            if is_locked(os.path.join(saveto, f'{wsi.name}.jpg')):
+            if is_locked(contour_geojson):
                 self.loop.set_postfix_str(f'{wsi.name} is locked. Skipping...')
                 try:
                     update_task_state(
@@ -365,7 +380,7 @@ class Processor:
                         "segmentation",
                         "skipped",
                         reason="locked",
-                        outputs={"contour_jpg": os.path.join(saveto, f"{wsi.name}.jpg")},
+                        outputs={"contour_geojson": contour_geojson},
                         wsi_meta=wsi_meta,
                     )
                 except Exception:
@@ -374,7 +389,7 @@ class Processor:
 
             try:
                 self.loop.set_postfix_str(f'Segmenting {wsi}')
-                create_lock(os.path.join(saveto, f'{wsi.name}.jpg'))
+                create_lock(contour_geojson)
                 update_log(os.path.join(self.job_dir, '_logs_segmentation.txt'), f'{wsi.name}{wsi.ext}', 'LOCKED. Segmenting tissue...')
                 try:
                     update_task_state(
@@ -383,7 +398,7 @@ class Processor:
                         "segmentation",
                         "running",
                         message="started",
-                        outputs={"contour_jpg": os.path.join(saveto, f"{wsi.name}.jpg")},
+                        outputs={"contour_geojson": contour_geojson},
                         attempt=make_attempt("started"),
                         wsi_meta=wsi_meta,
                     )
@@ -397,7 +412,8 @@ class Processor:
                     holes_are_tissue=holes_are_tissue,
                     job_dir=self.job_dir,
                     batch_size=batch_size,
-                    device=device
+                    device=device,
+                    save_visualizations=save_visualizations,
                 )
                 if getattr(wsi, "tiffslide_black_thumbnail_detected", False):
                     raise RuntimeError(
@@ -411,10 +427,11 @@ class Processor:
                         segmentation_model=artifact_remover_model,
                         target_mag=artifact_remover_model.target_mag,
                         holes_are_tissue=False,
-                        job_dir=self.job_dir
+                        job_dir=self.job_dir,
+                        save_visualizations=save_visualizations,
                     )
 
-                remove_lock(os.path.join(saveto, f'{wsi.name}.jpg'))
+                remove_lock(contour_geojson)
 
                 gdf = gpd.read_file(gdf_saveto, rows=1)
                 if gdf.empty:
@@ -432,7 +449,7 @@ class Processor:
                             "completed",
                             outputs={
                                 "contour_geojson": gdf_saveto,
-                                "contour_jpg": os.path.join(saveto, f"{wsi.name}.jpg"),
+                                "contour_jpg": contour_jpg if save_visualizations else None,
                             },
                             attempt=make_attempt("finished"),
                             wsi_meta=wsi_meta,
@@ -443,7 +460,7 @@ class Processor:
                 # Release WSI resources to prevent memory accumulation
                 wsi.release()
             except Exception as e:
-                remove_lock(os.path.join(saveto, f'{wsi.name}.jpg'))
+                remove_lock(contour_geojson)
                 # Release WSI resources even on error to prevent memory leaks
                 try:
                     wsi.release()
