@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from typing import Any, Optional, Tuple, Union
 
 import numpy as np
@@ -36,6 +37,7 @@ class FastSlideWSI(WSI):
         "openslide.objective-power",
         "aperio.AppMag",
     )
+    _MAX_THUMBNAIL_READ_PIXELS = 25_000_000
 
     def __init__(self, slide_path: str, apply_icc: bool = False, **kwargs: Any) -> None:
         self.apply_icc = apply_icc
@@ -226,6 +228,14 @@ class FastSlideWSI(WSI):
             level = self.get_best_level_and_custom_downsample(float(requested_downsample))[0]
 
         level_size = tuple(int(v) for v in self.level_dimensions[level])
+        if level_size[0] * level_size[1] > self._MAX_THUMBNAIL_READ_PIXELS:
+            warnings.warn(
+                f"Skipping FastSlide thumbnail pixel read for '{self.slide_path}' because "
+                f"selected level {level} is too large: {level_size}. "
+                "Using a blank thumbnail for visualization only."
+            )
+            return Image.new("RGB", (target_w, target_h), (255, 255, 255))
+
         region = self.img.read_region(location=(0, 0), level=level, size=level_size)
         thumbnail = self._normalize_region(region, level_size)
         resample_mode = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
