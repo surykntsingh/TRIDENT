@@ -74,6 +74,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--skip_errors', action=argparse.BooleanOptionalAction, default=True, 
                         help='Skip errored slides and continue processing. Defaults to enabled for batch runs. Use `--no-skip_errors` to fail fast.')
     parser.add_argument(
+        '--save_visualizations',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            'Save diagnostic thumbnail, contour, and coordinate JPEG visualizations. '
+            'Defaults to disabled because these files are not needed for coordinates or feature extraction.'
+        ),
+    )
+    parser.add_argument(
         '--clear_dead_locks',
         action='store_true',
         default=False,
@@ -341,6 +350,7 @@ def run_task(processor: Processor, args: argparse.Namespace) -> None:
             artifact_remover_model=artifact_remover_model,
             batch_size=args.seg_batch_size if args.seg_batch_size is not None else args.batch_size,
             device=seg_device,
+            save_visualizations=args.save_visualizations,
         )
     elif args.task == 'coords':
         processor.run_patching_job(
@@ -348,6 +358,7 @@ def run_task(processor: Processor, args: argparse.Namespace) -> None:
             patch_size=args.patch_size,
             overlap=args.overlap,
             saveto=args.coords_dir,
+            visualize=args.save_visualizations,
             min_tissue_proportion=args.min_tissue_proportion,
             dump_patches=args.dump_patches,
             dump_patches_max=args.dump_patches_max,
@@ -428,11 +439,11 @@ def get_pending_slides(args: argparse.Namespace) -> List[str]:
     feat_done = set()
 
     if 'seg' in tasks:
-        contour_dir = os.path.join(args.job_dir, 'contours')
+        contour_dir = os.path.join(args.job_dir, 'contours_geojson')
         seg_done = {
             os.path.splitext(filename)[0]
             for filename in safe_listdir(contour_dir)
-            if filename.lower().endswith('.jpg')
+            if filename.lower().endswith('.geojson')
         }
 
     if 'coords' in tasks:
