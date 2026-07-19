@@ -496,11 +496,19 @@ def worker_entrypoint(args: argparse.Namespace) -> None:
     Supports both cache mode (threaded producer/consumer pipeline) and
     non-cache mode (direct sequential processing).
     """
+    assigned_slides = list(getattr(args, 'selected_wsi_paths', None) or [])
+    if getattr(args, "gpu", -1) >= 0 and torch.cuda.is_available():
+        torch.cuda.set_device(args.gpu)
+    print(
+        f"[WORKER {args.gpu}] Starting on device={args.device} "
+        f"with {len(assigned_slides)} assigned slides.",
+        flush=True,
+    )
+
     if args.wsi_cache:
         gpu_cache_dir = os.path.join(args.wsi_cache, f"gpu_{args.gpu}")
         os.makedirs(gpu_cache_dir, exist_ok=True)
 
-        assigned_slides = list(getattr(args, 'selected_wsi_paths', None) or [])
         if not assigned_slides:
             print(f"[WORKER {args.gpu}] No slides assigned. Skipping cached pipeline.")
             return
@@ -543,9 +551,11 @@ def worker_entrypoint(args: argparse.Namespace) -> None:
 
     try:
         for task_name in tasks:
+            print(f"[WORKER {args.gpu}] Starting task={task_name}", flush=True)
             local_args = argparse.Namespace(**vars(args))
             local_args.task = task_name
             run_task(processor, local_args)
+            print(f"[WORKER {args.gpu}] Finished task={task_name}", flush=True)
     finally:
         if hasattr(processor, 'release'):
             processor.release()

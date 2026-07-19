@@ -39,6 +39,12 @@ class FastSlideWSI(WSI):
 
     def __init__(self, slide_path: str, apply_icc: bool = False, **kwargs: Any) -> None:
         self.apply_icc = apply_icc
+        # FastSlide is already fast in-process, and TRIDENT's default worker
+        # heuristic can create many DataLoader workers per GPU process. Those
+        # workers receive initialized native reader state during segmentation
+        # and feature extraction, which can hang or oversubscribe CPU/I/O.
+        if kwargs.get("max_workers") is None:
+            kwargs["max_workers"] = 0
         super().__init__(slide_path, **kwargs)
 
     def _lazy_initialize(self) -> None:
